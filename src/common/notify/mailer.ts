@@ -1,6 +1,7 @@
 import { AppError } from '../errors/app-error.js';
 import { loadEnv } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
+import { getEmailProvider } from '../../integrations/email/email.provider.js';
 
 export type SentMail = { to: string; subject: string; text: string; at: Date };
 export const fakeMailOutbox: SentMail[] = [];
@@ -17,9 +18,5 @@ export async function sendMail(to: string, subject: string, text: string): Promi
     if (env.NODE_ENV === 'development') logger.info({ to, subject }, '[fake-mail]');
     return;
   }
-  throw new AppError({
-    status: 503,
-    code: 'email/provider-unconfigured',
-    message: 'SMTP transport is not bundled in this build; plug a mail provider into src/common/notify/mailer.ts',
-  });
+  await getEmailProvider().send({ to, subject, text });
 }

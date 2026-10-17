@@ -1,1 +1,1 @@
-export type { SampleItem } from '../../types/sample';
+export type { SampleItem } from '../../types/sample.js';

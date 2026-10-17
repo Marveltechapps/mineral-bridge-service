@@ -23,8 +23,14 @@ export const webRegisterBody = z
       if (!v.email || !normalizeEmail(v.email)) {
         ctx.addIssue({ code: 'custom', path: ['email'], message: 'Enter a valid email address' });
       }
+      if (v.mobile && !normalizePhone(v.mobile)) {
+        ctx.addIssue({ code: 'custom', path: ['mobile'], message: 'Enter a valid mobile number with country code' });
+      }
     } else if (!v.mobile || !normalizePhone(v.mobile)) {
       ctx.addIssue({ code: 'custom', path: ['mobile'], message: 'Enter a valid mobile number with country code' });
+    }
+    if (v.method !== 'email' && v.email && !normalizeEmail(v.email)) {
+      ctx.addIssue({ code: 'custom', path: ['email'], message: 'Enter a valid email address' });
     }
   });
 

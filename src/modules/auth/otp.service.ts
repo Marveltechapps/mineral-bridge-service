@@ -394,6 +394,14 @@ export async function resendChallenge(input: {
 
   await enforceThrottle(input.client, existing.destination, input.ip, policy, now);
 
+  const previous = await OtpChallengeModel.findOne({
+    challengeId: existing.challengeId,
+    client: input.client,
+  })
+    .select('+codeHash')
+    .lean<LeanChallenge>();
+  if (!previous) throw fail(input.client, 'not_found');
+
   const code = generateOtpDigits(policy.codeLength);
   const expiresAt = new Date(now.getTime() + policy.ttlSeconds * 1000);
   const updated = await OtpChallengeModel.findOneAndUpdate(
@@ -422,7 +430,30 @@ export async function resendChallenge(input: {
   if (!updated) throw fail(input.client, 'cooldown', { retryAfterSeconds: policy.resendCooldownSeconds });
 
   if (!existing.decoy) {
-    await deliver(channel, existing.destination, code, policy.ttlSeconds);
+    try {
+      await deliver(channel, existing.destination, code, policy.ttlSeconds);
+    } catch (err) {
+      // The new hash was stored before the provider answered. Put the previous code back
+      // so a failed send does not burn the code the person may already have.
+      await OtpChallengeModel.updateOne(
+        { challengeId: existing.challengeId },
+        {
+          $set: {
+            codeHash: previous.codeHash,
+            channel: previous.channel,
+            expiresAt: previous.expiresAt,
+            attempts: previous.attempts,
+            lastSentAt: previous.lastSentAt,
+            resendAvailableAt: previous.resendAvailableAt,
+            purgeAt: previous.purgeAt,
+            sendCount: previous.sendCount,
+            ...(previous.lockedAt ? { lockedAt: previous.lockedAt } : {}),
+          },
+          ...(previous.lockedAt ? {} : { $unset: { lockedAt: 1 as const } }),
+        },
+      );
+      throw err;
+    }
   }
   const record = toRecord(updated)!;
   return { info: toInfo(record, now), challenge: record };

@@ -5,7 +5,9 @@ import { opaqueId } from '../../common/utils/ids.js';
 import { feeMinor, FEES, totalMinor } from '../../common/utils/pricing-math.js';
 import { references } from '../../common/utils/references.js';
 import { StateMachine } from '../../common/utils/state-machine.js';
+import { ProductModel } from '../../models/catalog.model.js';
 import { ListingModel } from '../../models/web-trade.model.js';
+import { catalogService } from '../catalog/catalog.service.js';
 import type { IListing, ListingStatus } from '../../models/web-trade.model.js';
 import { contentService } from '../content/content.service.js';
 import { notifyUser } from '../notifications/notifications.service.js';
@@ -43,6 +45,11 @@ export type ListingInput = {
 
 async function resolveMineral(input: Pick<ListingInput, 'mineralId' | 'customMineralName'>) {
   if (input.mineralId) {
+    const types = await catalogService.types();
+    const type = types.find((t) => t.slug === input.mineralId || t._id === input.mineralId);
+    if (type) return { code: type.mineralCode ?? type.slug, name: type.name, category: type.categorySlug };
+    const product = await ProductModel.findById(input.mineralId).lean();
+    if (product) return { code: product.mineralCode, name: product.name, category: product.categorySlug };
     const m = (await contentService.reference('mineral')).find((x) => x.code === input.mineralId);
     if (!m) throw unprocessable('Unknown mineral', { mineralId: 'Unknown mineral' }, 'listing/unknown-mineral');
     return { code: m.code, name: m.name, category: String((m.data as { category?: string }).category ?? 'other') };

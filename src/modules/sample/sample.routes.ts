@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSamples } from './sample.controller';
+import { getSamples } from './sample.controller.js';
 
 export const sampleRouter = Router();
 sampleRouter.get('/', getSamples);

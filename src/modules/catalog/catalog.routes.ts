@@ -12,20 +12,61 @@ import * as v from './catalog.validation.js';
 export function mobileCatalogRouter(): Router {
   const r = Router();
 
+  const categoryNode = (c: { _id: string; slug: string; name: string; description?: string; imageUrl?: string; imageName?: string; sourceId?: string; active: boolean }) => ({
+    id: c._id, slug: c.slug, name: c.name, description: c.description ?? null, imageUrl: c.imageUrl ?? null, imageName: c.imageName ?? null, sourceId: c.sourceId ?? null, isActive: c.active,
+  });
+  const typeNode = (t: { _id: string; slug: string; name: string; categorySlug: string; subcategorySlug?: string; imageUrl?: string; imageName?: string; sourceId?: string; active: boolean }) => ({
+    id: t._id, slug: t.slug, name: t.name, categorySlug: t.categorySlug, subcategorySlug: t.subcategorySlug ?? null, imageUrl: t.imageUrl ?? null, imageName: t.imageName ?? null, sourceId: t.sourceId ?? null, isActive: t.active,
+  });
+
   r.get('/catalog/categories', optionalUser, ah(async (_req, res) => {
-    const rows = await svc.categories();
-    res.json({ data: rows.map((c) => ({ id: c._id, slug: c.slug, name: c.name, description: c.description ?? null, imageUrl: c.imageUrl ?? null })) });
+    res.json({ data: (await svc.categories()).map(categoryNode) });
+  }));
+
+  r.get('/catalog/hierarchy', optionalUser, ah(async (_req, res) => {
+    res.json({ categories: await svc.hierarchy() });
+  }));
+
+  r.get('/catalog/categories/:categorySlug/subcategories', optionalUser, ah(async (req, res) => {
+    const rows = await svc.subcategories(String(req.params.categorySlug));
+    res.json({
+      data: rows.map((s) => ({
+        id: s._id, slug: s.slug, name: s.name, categorySlug: s.categorySlug, imageUrl: s.imageUrl ?? null, imageName: s.imageName ?? null, sourceId: s.sourceId ?? null, isActive: s.active,
+      })),
+    });
   }));
 
   r.get('/catalog/types', optionalUser, validate({ query: v.typesQuery }), ah(async (req, res) => {
-    const rows = await svc.types(req.query.category as string | undefined);
-    res.json({ data: rows.map((t) => ({ id: t._id, slug: t.slug, name: t.name, categorySlug: t.categorySlug, imageUrl: t.imageUrl ?? null })) });
+    const rows = await svc.types(req.query.category as string | undefined, req.query.subcategory as string | undefined);
+    res.json({ data: rows.map(typeNode) });
+  }));
+
+  r.get('/catalog/subcategories/:subcategorySlug/types', optionalUser, validate({ params: v.subcategoryParam }), ah(async (req, res) => {
+    res.json({ data: (await svc.types(undefined, String(req.params.subcategorySlug))).map(typeNode) });
   }));
 
   // Contract path: GET /catalog/categories/{categorySlug}/types
   r.get('/catalog/categories/:categorySlug/types', optionalUser, ah(async (req, res) => {
-    const rows = await svc.types(String(req.params.categorySlug));
-    res.json({ data: rows.map((t) => ({ id: t._id, slug: t.slug, name: t.name, categorySlug: t.categorySlug, imageUrl: t.imageUrl ?? null })) });
+    res.json({ data: (await svc.types(String(req.params.categorySlug))).map(typeNode) });
+  }));
+
+  r.get('/catalog/types/:typeSlug/forms', optionalUser, validate({ params: v.typeParam }), ah(async (req, res) => {
+    const rows = await svc.productForms(String(req.params.typeSlug));
+    res.json({
+      data: rows.map((f) => ({
+        id: f._id,
+        slug: f.slug,
+        name: f.name,
+        categorySlug: f.categorySlug,
+        subcategorySlug: f.subcategorySlug,
+        mineralTypeSlug: f.mineralTypeSlug,
+        imageUrl: f.imageUrl ?? null,
+        imageName: f.imageName ?? null,
+        sourceId: f.sourceId ?? null,
+        sourceSheet: f.sourceSheet,
+        isActive: f.active,
+      })),
+    });
   }));
 
   r.get('/catalog/products', optionalUser, validate({ query: v.productListQuery }), ah(async (req, res) => {
@@ -64,7 +105,9 @@ export function mobileCatalogRouter(): Router {
     const f = await svc.filters();
     res.json({
       categories: f.categories.map((c) => ({ slug: c.slug, name: c.name })),
-      types: f.types.map((t) => ({ slug: t.slug, name: t.name, categorySlug: t.categorySlug })),
+      subcategories: f.subcategories.map((s) => ({ slug: s.slug, name: s.name, categorySlug: s.categorySlug })),
+      types: f.types.map((t) => ({ slug: t.slug, name: t.name, categorySlug: t.categorySlug, subcategorySlug: t.subcategorySlug ?? null })),
+      productForms: f.forms.map((form) => ({ slug: form.slug, name: form.name, mineralTypeSlug: form.mineralTypeSlug, imageUrl: form.imageUrl ?? null, imageName: form.imageName ?? null })),
       origins: f.countries,
       sort: ['newest', 'price_asc', 'price_desc'],
     });

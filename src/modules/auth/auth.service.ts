@@ -1,4 +1,5 @@
 import { unprocessable } from '../../common/errors/app-error.js';
+import { projectCustomerAccount, safeProject } from '../../integration/customer-admin.bridge.js';
 import {
   createCustomerSession,
   forceRotateCustomerSession,
@@ -99,6 +100,7 @@ export async function verifyMobileOtp(input: {
   });
   // Phone-only product: an unknown number that proves possession becomes an account (login ≡ signup).
   const { user, isNew } = await findOrCreateByVerifiedPhone(challenge.destination);
+  await safeProject('account', () => projectAccount(user));
   const tokens = await issueCustomerTokens(user, 'mobile', input.device);
   return { tokens, user, isNewAccount: isNew };
 }
@@ -198,6 +200,7 @@ export async function verifyWebOtp(input: {
   }
   if (!user) throw unprocessable('We could not complete sign-in.', undefined, 'auth/invalid-credentials');
 
+  await safeProject('account', () => projectAccount(user));
   const tokens = await issueCustomerTokens(user, 'web', input.device);
   return { tokens, user, isNewAccount: isNew };
 }
@@ -241,6 +244,19 @@ export async function refreshCustomerTokens(input: {
     user,
     session: rotation.session,
   };
+}
+
+function projectAccount(user: UserRecord): Promise<void> {
+  return projectCustomerAccount({
+    id: user.id,
+    name: user.profile?.fullName || user.profile?.displayName || 'Customer',
+    email: user.email,
+    phone: user.phone,
+    org: user.profile?.companyName,
+    country: user.profile?.countryCode,
+    tier: user.tier,
+    kycStatus: user.kycStatus,
+  });
 }
 
 export async function signOutCustomer(input: {

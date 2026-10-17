@@ -22,9 +22,10 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
       const key = issue.path.join('.') || '_';
       if (!fields[key]) fields[key] = issue.message;
     }
+    const firstField = Object.values(fields)[0];
     res.status(422).json({
       code: 'validation/failed',
-      message: 'Validation failed',
+      message: firstField || 'Validation failed',
       fields,
       requestId: req.requestId,
     });

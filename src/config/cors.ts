@@ -48,6 +48,7 @@ export function buildCorsOptions(): CorsOptions {
       'X-Platform',
       'X-Device-Id',
       'X-CSRF-Token',
+      'X-Requested-With',
       'X-Transaction-Pin',
       'X-Timezone',
       'If-Match',

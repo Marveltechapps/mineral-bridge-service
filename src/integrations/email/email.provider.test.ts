@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeEmailProvider, SmtpEmailProvider } from './email.provider.js';
+import { FakeEmailProvider, ResendEmailProvider, SmtpEmailProvider } from './email.provider.js';
 
 describe('FakeEmailProvider', () => {
   it('captures messages in the outbox', async () => {
@@ -21,6 +21,23 @@ describe('SmtpEmailProvider', () => {
       status: 503,
       code: 'email/provider-unavailable',
     });
+  });
+});
+
+describe('ResendEmailProvider', () => {
+  it('does not report success unless Resend accepts the message', async () => {
+    const fetchImpl = vi.fn(async () => new Response('no', { status: 401 }));
+    const provider = new ResendEmailProvider('test-key', 'Mineral Bridge <otp@example.com>', fetchImpl as unknown as typeof fetch);
+    await expect(provider.send({ to: 'a@x.com', subject: 'code', text: 'secret-code' })).rejects.toMatchObject({
+      code: 'email/provider-unavailable',
+    });
+  });
+
+  it('resolves only after a 2xx response', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{"id":"email_1"}', { status: 200 }));
+    const provider = new ResendEmailProvider('test-key', 'Mineral Bridge <otp@example.com>', fetchImpl as unknown as typeof fetch);
+    await provider.send({ to: 'a@x.com', subject: 'code', text: 'secret-code' });
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 });
 

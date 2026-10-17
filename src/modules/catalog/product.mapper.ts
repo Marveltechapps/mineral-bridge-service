@@ -3,6 +3,7 @@ import { mobileMoney, webMoney } from '../../common/utils/currency.js';
 import { unitPriceMinorPerGram } from '../../common/utils/pricing-math.js';
 import { mobileQuantity, webQuantity } from '../../common/utils/quantity.js';
 import { iso } from '../../common/utils/time-display.js';
+import { repairCatalogImageUrl } from './hierarchy.js';
 
 const perGram = (p: IProduct) => ({ amountMinor: unitPriceMinorPerGram(p.unitPriceMinorE4PerGram), currency: p.currency });
 
@@ -11,8 +12,12 @@ export function toMobileProduct(p: IProduct, typeName?: string) {
     id: p._id,
     reference: p.reference,
     name: p.name,
-    type: { slug: p.typeSlug, name: typeName ?? p.typeSlug },
+    type: { slug: p.typeSlug, name: typeName ?? (typeof p.attributes?.mineralTypeName === 'string' ? p.attributes.mineralTypeName : p.typeSlug) },
     categorySlug: p.categorySlug,
+    subcategorySlug: p.subcategorySlug ?? null,
+    productFormSlug: p.productFormSlug ?? null,
+    productFormName: typeof p.attributes?.productFormName === 'string' ? p.attributes.productFormName : null,
+    imageName: p.imageName ?? null,
     mineralCode: p.mineralCode,
     purity: p.purity ?? null,
     grade: p.grade ?? null,
@@ -21,7 +26,7 @@ export function toMobileProduct(p: IProduct, typeName?: string) {
     assured: p.assured,
     verified: p.verified,
     status: p.status,
-    imageUrl: p.imageUrl ?? null,
+    imageUrl: repairCatalogImageUrl(p.imageUrl),
     gradient: p.gradientFrom ? { from: p.gradientFrom, to: p.gradientTo ?? p.gradientFrom } : null,
     availability: {
       available: mobileQuantity(p.availableGrams),
@@ -55,7 +60,7 @@ export function toWebLot(p: IProduct) {
     id: p._id,
     reference: p.reference,
     title: p.name,
-    mineral: { code: p.mineralCode, category: p.categorySlug, type: p.typeSlug },
+    mineral: { code: p.mineralCode, category: p.categorySlug, subcategory: p.subcategorySlug ?? null, type: p.typeSlug, productForm: p.productFormSlug ?? null },
     grade: p.grade ?? null,
     purity: p.purity ?? null,
     origin: { country: p.origin.country, region: p.origin.region ?? null, site: p.origin.site ?? null },
@@ -67,7 +72,17 @@ export function toWebLot(p: IProduct) {
     minOrder: webQuantity(p.minOrderGrams),
     unitPrice: { per: 'g', price: webMoney(perGram(p)) },
     passportId: p.passportId ?? null,
-    imageUrl: p.imageUrl ?? null,
+    imageUrl: repairCatalogImageUrl(p.imageUrl),
+    listPrice: typeof p.attributes?.listPrice === 'number' ? p.attributes.listPrice : null,
+    priceUnit: typeof p.attributes?.unit === 'string' ? p.attributes.unit : null,
+    categoryName: typeof p.attributes?.categoryName === 'string' ? p.attributes.categoryName : null,
+    subcategoryName: typeof p.attributes?.subcategoryName === 'string' ? p.attributes.subcategoryName : null,
+    subcategorySlug: p.subcategorySlug ?? null,
+    mineralTypeName: typeof p.attributes?.mineralTypeName === 'string' ? p.attributes.mineralTypeName : null,
+    mineralTypeSlug: p.typeSlug,
+    productFormName: typeof p.attributes?.productFormName === 'string' ? p.attributes.productFormName : null,
+    productFormSlug: p.productFormSlug ?? null,
+    imageName: p.imageName ?? null,
     createdAt: iso(p.createdAt),
   };
 }

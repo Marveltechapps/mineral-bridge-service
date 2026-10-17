@@ -11,6 +11,7 @@ import {
   type KycIdType,
   type WebSide,
 } from './kyc.id-types.js';
+import { projectKycSubmission, safeProject } from '../../integration/customer-admin.bridge.js';
 import { kycEvents } from './kyc.events.js';
 import { getKycFileResolver } from './kyc.file-store.js';
 import { KycDocumentModel, KycSubmissionModel } from './kyc.model.js';
@@ -366,6 +367,7 @@ async function finalizeSubmission(
         submissionId: submission.id,
       });
       kycEvents.emit('kyc.submitted', { userId, submissionId: submission.id, reference, source });
+      await safeProject('kyc', () => projectKycSubmission(submission, submission.declaredDetails.fullName));
       return submission;
     } catch (err) {
       if (isDuplicateKeyError(err)) continue; // reference collision — draw another

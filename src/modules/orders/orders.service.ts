@@ -10,6 +10,7 @@ import type { IOrder, IOrderLine, OrderStatus, PaymentMethod } from '../../model
 import type { IProduct } from '../../models/catalog.model.js';
 import type { IUser } from '../../models/user.model.js';
 import type { MoneyDoc } from '../../models/_shared.js';
+import { projectCustomerAccount, projectCustomerOrder, safeProject } from '../../integration/customer-admin.bridge.js';
 import { notifyUser } from '../notifications/notifications.service.js';
 import { docsFor, orderMachine, STAGE_COUNT, stagesFor, statusForStage } from './order.stages.js';
 import { ordersRepository as repo } from './orders.repository.js';
@@ -280,6 +281,20 @@ export const ordersService = {
         version: 0,
       });
       if (input.source.kind === 'cart') await repo.clearCart(input.userId);
+
+      await safeProject('order', async () => {
+        await projectCustomerAccount({
+          id: user._id.toString(),
+          name: user.profile?.fullName || user.profile?.displayName || 'Customer',
+          email: user.email,
+          phone: user.phone,
+          org: user.profile?.companyName,
+          country: user.profile?.countryCode,
+          tier: user.tier,
+          kycStatus: user.kycStatus,
+        });
+        await projectCustomerOrder(order);
+      });
 
       void notifyUser(input.userId, {
         event: 'order.stage_changed',

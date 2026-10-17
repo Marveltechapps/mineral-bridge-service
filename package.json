@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "seed": "tsx scripts/seed.ts",
+    "catalog:sync": "tsx scripts/sync-catalog.ts",
     "coverage:endpoints": "tsx scripts/audit-endpoint-coverage.ts",
     "openapi": "tsx scripts/generate-openapi.ts"
   },

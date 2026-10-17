@@ -16,6 +16,11 @@ export interface OtpSendRequest {
 
 export interface OtpSendResult {
   providerMessageId?: string;
+  /**
+   * True only when the provider reported terminal delivery (handset or inbox).
+   * A resolved `send()` means the provider accepted the request, which is not delivery.
+   */
+  delivered: boolean;
 }
 
 export interface OtpProvider {
@@ -40,10 +45,9 @@ export class FakeOtpProvider implements OtpProvider {
     this.codes.set(request.to, { code: request.code, channel: request.channel, at });
     this.sent.push({ to: request.to, channel: request.channel, at });
     if (loadEnv().NODE_ENV === 'development') {
-      // Developer convenience on the server console only (never in a response body).
-      logger.info({ to: request.to, channel: request.channel }, `[fake-otp] code is ${request.code}`);
+      logger.info({ to: request.to, channel: request.channel }, '[fake-otp] code captured for local development');
     }
-    return { providerMessageId: `fake_${at.getTime()}` };
+    return { providerMessageId: `fake_${at.getTime()}`, delivered: false };
   }
 
   /** TEST ONLY. */
@@ -73,12 +77,12 @@ export class TwilioOtpProvider implements OtpProvider {
   readonly name = 'twilio';
 
   constructor(
-    private readonly config: TwilioConfig,
+    private readonly config: TwilioConfig & { whatsappFrom?: string },
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  private assertConfigured(): Required<TwilioConfig> {
-    const { accountSid, authToken, fromNumber } = this.config;
+  private assertConfigured(): Required<TwilioConfig> & { whatsappFrom: string } {
+    const { accountSid, authToken, fromNumber, whatsappFrom } = this.config;
     if (!accountSid || !authToken || !fromNumber) {
       throw new AppError({
         status: 503,
@@ -88,11 +92,11 @@ export class TwilioOtpProvider implements OtpProvider {
         details: undefined,
       });
     }
-    return { accountSid, authToken, fromNumber };
+    return { accountSid, authToken, fromNumber, whatsappFrom: whatsappFrom || fromNumber };
   }
 
   async send(request: OtpSendRequest): Promise<OtpSendResult> {
-    const { accountSid, authToken, fromNumber } = this.assertConfigured();
+    const { accountSid, authToken, fromNumber, whatsappFrom } = this.assertConfigured();
     const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
     const base = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}`;
     const body = new URLSearchParams();
@@ -110,8 +114,10 @@ export class TwilioOtpProvider implements OtpProvider {
     } else {
       url = `${base}/Messages.json`;
       const prefix = request.channel === 'whatsapp' ? 'whatsapp:' : '';
-      body.set('To', `${prefix}${request.to}`);
-      body.set('From', `${prefix}${fromNumber}`);
+      const sender = request.channel === 'whatsapp' ? whatsappFrom : fromNumber;
+      const normalizedFrom = sender.startsWith('whatsapp:') || prefix === '' ? sender : `${prefix}${sender}`;
+      body.set('To', `${prefix}${request.to.replace(/^whatsapp:/, '')}`);
+      body.set('From', normalizedFrom);
       body.set(
         'Body',
         `Your Mineral Bridge code is ${request.code}. It expires in ${Math.ceil(request.ttlSeconds / 60)} min. Never share it.`,
@@ -127,6 +133,7 @@ export class TwilioOtpProvider implements OtpProvider {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body,
+        signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
       logger.error({ err }, 'Twilio request failed');
@@ -148,8 +155,99 @@ export class TwilioOtpProvider implements OtpProvider {
             : 'Verification codes cannot be sent right now. Please try again shortly.',
       });
     }
-    const json = (await res.json().catch(() => ({}))) as { sid?: string };
-    return { providerMessageId: json.sid };
+    const json = (await res.json().catch(() => ({}))) as { sid?: string; status?: string };
+    const status = (json.status ?? '').toLowerCase();
+    if (status === 'failed' || status === 'undelivered' || status === 'canceled' || status === 'cancelled') {
+      logger.error({ status: res.status, providerStatus: status }, 'Twilio reported the OTP was not accepted');
+      throw new AppError({
+        status: 503,
+        code: 'otp/provider-unavailable',
+        message: 'Verification codes cannot be sent right now. Please try again shortly.',
+      });
+    }
+    return { providerMessageId: json.sid, delivered: status === 'delivered' || status === 'read' };
+  }
+}
+
+/**
+ * SpearUC-style HTTP SMS gateway. The vendor URL already carries its credentials,
+ * so this provider never logs the URL, the query string, or the message body.
+ * A send counts as accepted only when the gateway returns HTTP 2xx and a body
+ * that explicitly says the message was sent. That acceptance is not handset delivery.
+ */
+/** Gateway HTTP success is acceptance, not handset delivery. */
+export function smsGatewayAccepted(httpOk: boolean, body: string): boolean {
+  if (!httpOk) return false;
+  const text = body.trim();
+  if (!text) return false;
+  try {
+    const json = JSON.parse(text) as { status?: unknown };
+    const status = String(json.status ?? '').toLowerCase();
+    if (status === 'error' || status === 'failed' || status === 'fail') return false;
+    if (status === 'success' || status === 'sent' || status === 'ok' || status === 'queued' || status === 'accepted') {
+      return true;
+    }
+  } catch {
+    /* The gateway sometimes answers with plain text. */
+  }
+  if (/fail|invalid|error|denied|reject/i.test(text)) return false;
+  if (/sent|success|ok|accept|queued/i.test(text)) return true;
+  return /^\d{1,20}$/.test(text);
+}
+
+export class SpearucOtpProvider implements OtpProvider {
+  readonly name = 'spearuc';
+
+  constructor(
+    private readonly vendorUrl: string | undefined,
+    private readonly messageTemplate: string | undefined = undefined,
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
+
+  async send(request: OtpSendRequest): Promise<OtpSendResult> {
+    if (!this.vendorUrl) {
+      throw new AppError({
+        status: 503,
+        code: 'otp/provider-unavailable',
+        message: 'Verification codes cannot be sent right now. Please try again shortly.',
+      });
+    }
+    if (request.channel !== 'sms') {
+      throw new AppError({
+        status: 422,
+        code: 'otp/channel-unsupported',
+        message: 'This number can only receive SMS verification codes right now.',
+      });
+    }
+    const url = new URL(this.vendorUrl);
+    url.searchParams.set('mobile', request.to.replace(/^\+/, ''));
+    const template = this.messageTemplate?.trim();
+    const message = template?.includes('{otp}')
+      ? template.replaceAll('{otp}', request.code)
+      : `Your Mineral Bridge code is ${request.code}. It expires in ${Math.ceil(request.ttlSeconds / 60)} min. Never share it.`;
+    url.searchParams.set('message', message);
+    let res: Response;
+    try {
+      res = await this.fetchImpl(url.toString(), { method: 'GET', signal: AbortSignal.timeout(10_000) });
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.name : 'error' }, 'SMS gateway request failed');
+      throw new AppError({
+        status: 503,
+        code: 'otp/provider-unavailable',
+        message: 'Verification codes cannot be sent right now. Please try again shortly.',
+      });
+    }
+    const text = await res.text().catch(() => '');
+    const accepted = smsGatewayAccepted(res.ok, text);
+    if (!accepted) {
+      logger.error({ status: res.status }, 'SMS gateway rejected OTP send');
+      throw new AppError({
+        status: 503,
+        code: 'otp/provider-unavailable',
+        message: 'Verification codes cannot be sent right now. Please try again shortly.',
+      });
+    }
+    return { providerMessageId: `spearuc_${Date.now()}`, delivered: false };
   }
 }
 
@@ -177,8 +275,11 @@ export function createOtpProvider(): OtpProvider {
       return new TwilioOtpProvider({
         accountSid: env.TWILIO_ACCOUNT_SID,
         authToken: env.TWILIO_AUTH_TOKEN,
-        fromNumber: env.TWILIO_FROM_NUMBER,
+        fromNumber: env.TWILIO_FROM_NUMBER || env.TWILIO_SMS_FROM,
+        whatsappFrom: env.TWILIO_WHATSAPP_FROM,
       });
+    case 'spearuc':
+      return new SpearucOtpProvider(env.SMS_VENDOR_URL, env.OTP_SMS_MESSAGE);
     default:
       return new UnavailableOtpProvider(env.OTP_PROVIDER);
   }

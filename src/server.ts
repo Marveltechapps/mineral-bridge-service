@@ -3,11 +3,13 @@ import { createApp } from './app.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { loadEnv } from './config/env.js';
 import { logger } from './config/logger.js';
+import { assertProductionConfig } from './config/production-guards.js';
 import { startAuctionScheduler } from './modules/admin/auctions/auctions.service.js';
 import { attachWebSocketServer } from './realtime/ws-server.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
+  assertProductionConfig(env);
   await connectDatabase();
 
   const app = createApp();

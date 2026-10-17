@@ -7,5 +7,6 @@ coverage/
 .DS_Store
 uploads/
 tmp/
+reports/
 .mongo-data/
 mongodb-memory-server*

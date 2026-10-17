@@ -2,7 +2,7 @@ import { notFound } from '../../common/errors/app-error.js';
 import { now } from '../../common/utils/clock.js';
 import { ContentModel, RateModel, ReferenceModel } from '../../models/reference.model.js';
 import type { IContentBlock, IRateSnapshot, IReferenceItem, ReferenceKind } from '../../models/reference.model.js';
-import { ProductModel } from '../../models/catalog.model.js';
+import { MineralTypeModel, ProductModel } from '../../models/catalog.model.js';
 import { OrderModel } from '../../models/order.model.js';
 import { CONTENT_DEFAULTS, RATE_DEFAULTS, REFERENCE_DEFAULTS } from './defaults.js';
 
@@ -39,11 +39,12 @@ export const contentService = {
 
   async stats() {
     const since = new Date(now().getTime() - 30 * 86_400_000);
-    const [activeLots, orders30d, countries] = await Promise.all([
+    const [activeLots, orders30d, countries, mineralTypes] = await Promise.all([
       ProductModel.countDocuments({ status: 'active' }),
       OrderModel.countDocuments({ createdAt: { $gte: since } }),
       ProductModel.distinct('origin.country', { status: 'active' }),
+      MineralTypeModel.countDocuments({ active: true }),
     ]);
-    return { activeLots, orders30d, originCountries: countries.length, asOf: now() };
+    return { activeLots, orders30d, originCountries: countries.length, mineralTypes, asOf: now() };
   },
 };

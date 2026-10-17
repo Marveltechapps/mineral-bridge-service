@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
-import { SampleValidationError } from './sample.error';
-import { listSamples } from './sample.service';
-import { sampleQuerySchema } from './sample.validation';
+import { SampleValidationError } from './sample.error.js';
+import { listSamples } from './sample.service.js';
+import { sampleQuerySchema } from './sample.validation.js';
 
 export function getSamples(req: Request, res: Response): void {
   const query = sampleQuerySchema.safeParse(req.query);

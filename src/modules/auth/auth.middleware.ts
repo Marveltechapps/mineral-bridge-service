@@ -222,7 +222,7 @@ export const requireWebCookieOrigin: RequestHandler = (req, _res, next) => {
     return next(csrf());
   }
 
-  if (process.env.WEB_CSRF_REQUIRE_CUSTOM_HEADER === 'true') {
+  if (process.env.WEB_CSRF_REQUIRE_CUSTOM_HEADER === 'true' || env.NODE_ENV === 'production') {
     const marker = (req.header('x-requested-with') ?? '').toLowerCase() === 'mb-web';
     const webClient = (req.header('x-client') ?? '').toLowerCase().startsWith('mineralbridge-web');
     if (!marker && !webClient) return next(csrf());

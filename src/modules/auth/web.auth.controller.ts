@@ -40,6 +40,7 @@ function challengeBody(info: ChallengeInfo) {
     method: webMethodForChannel(info.channel),
     target: info.maskedDestination,
     expiresIn: info.expiresInSeconds,
+    resendAfter: info.resendAfterSeconds,
     codeLength: WEB_CODE_LENGTH,
   };
 }
@@ -96,6 +97,8 @@ export async function register(req: Request, res: Response): Promise<void> {
       companyName: b.companyName || undefined,
       country: b.country,
       acceptedTermsVersion: b.acceptedTermsVersion,
+      email: b.method === 'email' ? identifier : normalizeEmail(b.email ?? '') ?? undefined,
+      phone: b.method === 'email' ? normalizePhone(b.mobile ?? '') ?? undefined : identifier,
     },
     ip: clientIp(req),
   });

@@ -23,6 +23,7 @@ import { settlementRoutes } from '../../modules/admin/settlements/settlements.ro
 import { buildAdminRouter, toInventoryPath, type AdminRouteDef } from '../../modules/admin/shared/route-kit.js';
 import { shellRoutes } from '../../modules/admin/shell/shell.routes.js';
 import { supportRoutes } from '../../modules/admin/support/support.routes.js';
+import { catalogAdminRoutes } from '../../modules/admin/catalog/catalog.routes.js';
 import { vaultRoutes } from '../../modules/admin/vault/vault.routes.js';
 
 /** Endpoints #13–139. Endpoints #1–12 (auth, GET /me) live in modules/auth/admin.auth.routes.ts. */
@@ -65,5 +66,7 @@ export function createAdminRouter(): Router {
   const r = Router();
   r.use(createAdminAuthRouter());
   r.use(buildAdminRouter(adminRouteDefs));
+  // Hierarchy reads sit beside the numbered inventory so #13–139 stay unchanged.
+  r.use(buildAdminRouter(catalogAdminRoutes));
   return r;
 }

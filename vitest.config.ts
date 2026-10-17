@@ -9,5 +9,6 @@ export default defineConfig({
     hookTimeout: 60_000,
     fileParallelism: false,
     sequence: { concurrent: false },
+    exclude: ['**/node_modules/**', '**/dist/**', '**/.claude/**'],
   },
 });

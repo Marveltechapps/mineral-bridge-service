@@ -159,6 +159,10 @@ export interface WebRegistrationPayload {
   companyName?: string;
   country: string;
   acceptedTermsVersion: string;
+  /** Verified only when it is the OTP channel. */
+  email?: string;
+  /** Verified only when it is the OTP channel. */
+  phone?: string;
 }
 
 /**
@@ -177,10 +181,21 @@ export async function findOrCreateFromWebRegistration(
     const user = await markVerified(existing, isEmail ? { email: true } : { phone: true });
     return { user, isNew: false };
   }
+  const email = payload.email ?? (isEmail ? payload.identifier : undefined);
+  const phone = payload.phone ?? (isEmail ? undefined : payload.identifier);
+  let storedEmail = email;
+  let storedPhone = phone;
+  if (storedEmail && !isEmail) {
+    const owner = await userRepository.findByEmail(storedEmail);
+    if (owner) storedEmail = undefined;
+  }
+  if (storedPhone && isEmail) {
+    const owner = await userRepository.findByPhone(storedPhone);
+    if (owner) storedPhone = undefined;
+  }
   const input: CreateUserInput = {
-    ...(isEmail
-      ? { email: payload.identifier, emailVerified: true }
-      : { phone: payload.identifier, phoneVerified: true }),
+    ...(storedPhone ? { phone: storedPhone, phoneVerified: !isEmail } : {}),
+    ...(storedEmail ? { email: storedEmail, emailVerified: isEmail } : {}),
     roles: [payload.role],
     profile: {
       fullName: payload.fullName,

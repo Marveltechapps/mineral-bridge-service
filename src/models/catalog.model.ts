@@ -6,6 +6,8 @@ export interface ICategory {
   name: string;
   description?: string;
   imageUrl?: string;
+  imageName?: string;
+  sourceId?: string;
   sort: number;
   active: boolean;
 }
@@ -18,21 +20,56 @@ export const CategoryModel = defineModel<ICategory>(
     name: { type: String, required: true },
     description: String,
     imageUrl: String,
+    imageName: String,
+    sourceId: String,
     sort: { type: Number, default: 0 },
     active: { type: Boolean, default: true },
   },
+);
+
+export interface ISubcategory {
+  _id: string;
+  slug: string;
+  name: string;
+  categorySlug: string;
+  imageUrl?: string;
+  imageName?: string;
+  sourceId?: string;
+  sort: number;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export const SubcategoryModel = defineModel<ISubcategory>(
+  'Subcategory',
+  {
+    _id: pk('sub'),
+    slug: { type: String, required: true, unique: true },
+    name: { type: String, required: true },
+    categorySlug: { type: String, required: true, index: true },
+    imageUrl: String,
+    imageName: String,
+    sourceId: String,
+    sort: { type: Number, default: 0 },
+    active: { type: Boolean, default: true },
+  },
+  { indexes: [[{ categorySlug: 1, name: 1 }, { unique: true }]] },
 );
 
 export interface IMineralType {
   _id: string;
   slug: string;
   categorySlug: string;
+  subcategorySlug?: string;
   mineralCode?: string;
   name: string;
   /** Minerals sellable in the mobile sell flow carry the tiers they accept. */
   sellable: boolean;
   tiers: number[];
   imageUrl?: string;
+  imageName?: string;
+  sourceId?: string;
   sort: number;
   active: boolean;
 }
@@ -43,14 +80,55 @@ export const MineralTypeModel = defineModel<IMineralType>(
     _id: pk('typ'),
     slug: { type: String, required: true, unique: true },
     categorySlug: { type: String, required: true, index: true },
+    subcategorySlug: { type: String, index: true },
     mineralCode: String,
     name: { type: String, required: true },
     sellable: { type: Boolean, default: true },
     tiers: { type: [Number], default: [1, 2, 3] },
     imageUrl: String,
+    imageName: String,
+    sourceId: String,
     sort: { type: Number, default: 0 },
     active: { type: Boolean, default: true },
   },
+  { indexes: [[{ subcategorySlug: 1, name: 1 }, { unique: true, partialFilterExpression: { subcategorySlug: { $type: 'string' } } }]] },
+);
+
+export interface IProductForm {
+  _id: string;
+  slug: string;
+  name: string;
+  categorySlug: string;
+  subcategorySlug: string;
+  mineralTypeSlug: string;
+  imageUrl?: string;
+  imageName?: string;
+  sourceId?: string;
+  /** True when the Google Sheet owns the name, image, and parent slugs. */
+  sourceSheet: boolean;
+  sort: number;
+  active: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export const ProductFormModel = defineModel<IProductForm>(
+  'ProductForm',
+  {
+    _id: pk('frm'),
+    slug: { type: String, required: true, unique: true },
+    name: { type: String, required: true },
+    categorySlug: { type: String, required: true, index: true },
+    subcategorySlug: { type: String, required: true, index: true },
+    mineralTypeSlug: { type: String, required: true, index: true },
+    imageUrl: String,
+    imageName: String,
+    sourceId: String,
+    sourceSheet: { type: Boolean, default: false },
+    sort: { type: Number, default: 0 },
+    active: { type: Boolean, default: true },
+  },
+  { indexes: [[{ mineralTypeSlug: 1, name: 1 }, { unique: true }]] },
 );
 
 export type ProductStatus = 'draft' | 'active' | 'sold' | 'withdrawn';
@@ -61,6 +139,8 @@ export interface IProduct {
   name: string;
   typeSlug: string;
   categorySlug: string;
+  subcategorySlug?: string;
+  productFormSlug?: string;
   mineralCode: string;
   purity?: string;
   grade?: string;
@@ -77,6 +157,7 @@ export interface IProduct {
   assured: boolean;
   verified: boolean;
   imageUrl?: string;
+  imageName?: string;
   gradientFrom?: string;
   gradientTo?: string;
   description?: string;
@@ -97,6 +178,8 @@ export const ProductModel = defineModel<IProduct>(
     name: { type: String, required: true },
     typeSlug: { type: String, required: true },
     categorySlug: { type: String, required: true },
+    subcategorySlug: { type: String, index: true },
+    productFormSlug: { type: String, index: true },
     mineralCode: { type: String, required: true },
     purity: String,
     grade: String,
@@ -116,6 +199,7 @@ export const ProductModel = defineModel<IProduct>(
     assured: { type: Boolean, default: false },
     verified: { type: Boolean, default: true },
     imageUrl: String,
+    imageName: String,
     gradientFrom: String,
     gradientTo: String,
     description: String,
@@ -157,6 +241,9 @@ export const ProductModel = defineModel<IProduct>(
     indexes: [
       [{ typeSlug: 1, status: 1, createdAt: -1 }],
       [{ categorySlug: 1, status: 1 }],
+      [{ subcategorySlug: 1, status: 1 }],
+      [{ productFormSlug: 1, status: 1 }],
+      [{ categorySlug: 1, subcategorySlug: 1, typeSlug: 1, productFormSlug: 1, status: 1 }],
       [{ name: 'text', description: 'text', mineralCode: 'text' }],
     ],
     schema: { minimize: false },

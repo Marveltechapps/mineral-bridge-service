@@ -33,6 +33,7 @@ import { notifyStaff } from '../shared/notify.js';
 import { loadFileRefs } from '../shared/files.js';
 import { loadStaffMap, loadUserMap, partyFrom, requireUser } from '../shared/refs.js';
 import { route, type AdminRouteDef } from '../shared/route-kit.js';
+import { reflectAdminOrderStage } from '../../../integration/customer-admin.bridge.js';
 import { ORDER_SORT, buildOrderFilter, mapOrderDetail, mapOrderSummaries, requireOrder, stageIndex } from './orders.service.js';
 
 function staleStage(o: Record<string, any>, expected?: string) // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -352,6 +353,7 @@ export const orderRoutes: AdminRouteDef[] = [
       });
       return { updated, auditId };
     });
+    await reflectAdminOrderStage(orderId, next);
     res.json(action(await mapOrderDetail(updated), `${orderId} advanced to ${label}`, auditId));
   }, { body: z.object({ expectedStage: z.enum(ORDER_STAGES), note: z.string().max(1000).optional() }) }),
 

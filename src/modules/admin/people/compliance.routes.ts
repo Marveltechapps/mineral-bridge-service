@@ -9,6 +9,7 @@ import { sendCustomerMessage } from '../shared/messaging.js';
 import { loadStaffMap, loadUserMap, staffFrom } from '../shared/refs.js';
 import { route, type AdminRouteDef } from '../shared/route-kit.js';
 import { auditActor } from '../shared/staff-context.js';
+import { applyAdminKycToCustomer } from '../../../integration/customer-admin.bridge.js';
 import { KYC_SLA_MS, trackedDocumentDto, userIdsMatching } from './people.dto.js';
 
 const DOC_SORT: Record<string, string> = { type: 'type', holder: 'userId', tier: 'tier', daysToExpiry: 'expiresOn', status: 'status' };
@@ -117,6 +118,12 @@ export const complianceRoutes: AdminRouteDef[] = [
         activity: { text: b.decision === 'approve' ? `Tier ${k.tier} approved for ${person}` : b.decision === 'reject' ? `${kycId} rejected` : `Resubmission requested from ${person}`, kind: 'kyc', ref: { type: 'kyc', id: kycId } },
       });
       return { auditId };
+    });
+    await applyAdminKycToCustomer({
+      kycId,
+      staffId: actor.staffId,
+      decision: b.decision,
+      reason: b.decision === 'approve' ? undefined : b.reason,
     });
     const text = b.decision === 'approve' ? `Your Tier ${k.tier} verification is approved.` : b.decision === 'reject' ? `Your verification was not approved: ${b.reason}` : `Please resubmit your documents: ${b.reason}`;
     await sendCustomerMessage({ userId: k.userId, subject: 'Verification update', body: text, channels: ['in_app'], related: { type: 'kyc', id: kycId }, sentBy: actor.staffId }).catch(() => undefined);

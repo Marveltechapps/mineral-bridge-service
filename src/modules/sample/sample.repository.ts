@@ -1,4 +1,4 @@
-import type { SampleItem } from './sample.model';
+import type { SampleItem } from './sample.model.js';
 
 const items: SampleItem[] = [
   { id: 'sample-001', name: 'Sample mineral', description: 'Example data for the Mineral Bridge project structure.' },

@@ -1,6 +1,7 @@
 import { AppError } from '../errors/app-error.js';
 import { loadEnv } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
+import { smsGatewayAccepted } from '../../integrations/otp/otp.provider.js';
 
 export type SentSms = { to: string; text: string; at: Date };
 
@@ -25,14 +26,15 @@ export async function sendSms(to: string, text: string): Promise<void> {
     }
     fakeSmsOutbox.push({ to, text, at: new Date() });
     if (fakeSmsOutbox.length > 200) fakeSmsOutbox.shift();
-    if (env.NODE_ENV === 'development') logger.info({ to, text }, '[fake-sms]');
+    if (env.NODE_ENV === 'development') logger.info({ to }, '[fake-sms]');
     return;
   }
   if (env.OTP_PROVIDER === 'twilio') {
-    if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !env.TWILIO_FROM_NUMBER) {
+    const from = env.TWILIO_FROM_NUMBER || env.TWILIO_SMS_FROM;
+    if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN || !from) {
       throw unavailable('sms/provider-unconfigured', 'Twilio credentials are not configured');
     }
-    const body = new URLSearchParams({ To: to, From: env.TWILIO_FROM_NUMBER, Body: text });
+    const body = new URLSearchParams({ To: to, From: from, Body: text });
     const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`, {
       method: 'POST',
       headers: {
@@ -40,12 +42,31 @@ export async function sendSms(to: string, text: string): Promise<void> {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body,
+      signal: AbortSignal.timeout(10_000),
     }).catch((err: unknown) => {
-      logger.error({ err }, 'Twilio request failed');
+      logger.error({ err: err instanceof Error ? err.name : 'error' }, 'Twilio request failed');
       throw unavailable('sms/provider-down', 'SMS provider is unreachable');
     });
     if (!res.ok) {
       logger.error({ status: res.status }, 'Twilio rejected message');
+      throw unavailable('sms/provider-error', 'SMS provider rejected the message');
+    }
+    return;
+  }
+  if (env.OTP_PROVIDER === 'spearuc') {
+    if (!env.SMS_VENDOR_URL) {
+      throw unavailable('sms/provider-unconfigured', 'SMS gateway URL is not configured');
+    }
+    const url = new URL(env.SMS_VENDOR_URL);
+    url.searchParams.set('mobile', to.replace(/^\+/, ''));
+    url.searchParams.set('message', text);
+    const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(10_000) }).catch((err: unknown) => {
+      logger.error({ err: err instanceof Error ? err.name : 'error' }, 'SMS gateway request failed');
+      throw unavailable('sms/provider-down', 'SMS provider is unreachable');
+    });
+    const body = await res.text().catch(() => '');
+    if (!smsGatewayAccepted(res.ok, body)) {
+      logger.error({ status: res.status }, 'SMS gateway rejected message');
       throw unavailable('sms/provider-error', 'SMS provider rejected the message');
     }
     return;

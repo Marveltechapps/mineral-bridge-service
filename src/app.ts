@@ -15,8 +15,12 @@ import { buildCorsOptions } from './config/cors.js';
 import { isDatabaseReady } from './config/database.js';
 import { loadEnv } from './config/env.js';
 import { helmetOptions } from './config/security.js';
+import { setUnreadNotificationCounter } from './modules/auth/index.js';
+import { notificationsRepository } from './modules/notifications/notifications.repository.js';
 import { storageRouter } from './modules/storage/storage.routes.js';
 import { buildV1Router } from './routes/v1.js';
+
+setUnreadNotificationCounter((userId) => notificationsRepository.countUnread(userId));
 
 function loadOpenApi(): Record<string, unknown> | null {
   const file = path.resolve(process.cwd(), 'openapi', 'openapi.yaml');
@@ -68,7 +72,8 @@ export function createApp(): Express {
   });
 
   const openapi = loadOpenApi();
-  if (openapi) app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi, { customSiteTitle: 'Mineral Bridge API' }));
+  const publishDocs = env.NODE_ENV !== 'production' || env.ENABLE_API_DOCS;
+  if (openapi && publishDocs) app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi, { customSiteTitle: 'Mineral Bridge API' }));
 
   app.use(storageRouter);
   app.use('/v1', buildV1Router());

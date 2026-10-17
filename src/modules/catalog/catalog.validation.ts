@@ -6,7 +6,9 @@ const bool = z.union([z.literal('true'), z.literal('false'), z.boolean()]).optio
 
 export const productListQuery = z.object({
   category: z.string().optional(),
+  subcategory: z.string().optional(),
   type: z.string().optional(),
+  productForm: z.string().optional(),
   q: z.string().trim().max(100).optional(),
   assured: bool,
   minGrams: z.coerce.number().int().min(0).optional(),
@@ -16,17 +18,24 @@ export const productListQuery = z.object({
   cursor: z.string().optional(),
 });
 
-export const typesQuery = z.object({ category: z.string().optional() });
+export const typesQuery = z.object({ category: z.string().optional(), subcategory: z.string().optional() });
+export const subcategoryParam = z.object({ subcategorySlug: z.string().min(1) });
+export const typeParam = z.object({ typeSlug: z.string().min(1) });
+export const formPatch = z.object({ active: z.boolean() }).strict();
 export const searchQuery = z.object({ q: z.string().trim().min(1).max(100), limit: z.coerce.number().int().min(1).max(50).optional() });
 
 export const lotListQuery = z.object({
   category: z.string().optional(),
+  subcategory: z.string().optional(),
+  type: z.string().optional(),
+  productForm: z.string().optional(),
   mineral: z.string().optional(),
   country: z.string().optional(),
+  grade: z.string().trim().max(40).optional(),
   q: z.string().trim().max(100).optional(),
   verified: bool,
   minGrams: z.coerce.number().int().min(0).optional(),
-  sort: z.enum(['newest', 'price_asc', 'price_desc']).default('newest'),
+  sort: z.enum(['newest', 'price_asc', 'price_desc', 'name']).default('newest'),
   page: z.coerce.number().int().min(1).optional(),
   perPage: z.coerce.number().int().min(1).max(100).optional(),
 });

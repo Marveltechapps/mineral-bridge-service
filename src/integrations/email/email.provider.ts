@@ -108,6 +108,60 @@ export class SmtpEmailProvider implements EmailProvider {
   }
 }
 
+export class ResendEmailProvider implements EmailProvider {
+  readonly name = 'resend';
+
+  constructor(
+    private readonly apiKey: string | undefined,
+    private readonly from: string,
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
+
+  async send(message: EmailMessage): Promise<void> {
+    if (!this.apiKey) {
+      logger.error('Resend API key is not configured');
+      throw new AppError({
+        status: 503,
+        code: 'email/provider-unavailable',
+        message: 'Email cannot be sent right now. Please try again shortly.',
+      });
+    }
+    let res: Response;
+    try {
+      res = await this.fetchImpl('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: this.from,
+          to: [message.to],
+          subject: message.subject,
+          text: message.text,
+          html: message.html,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err) {
+      logger.error({ err }, 'Resend request failed');
+      throw new AppError({
+        status: 503,
+        code: 'email/provider-unavailable',
+        message: 'Email cannot be sent right now. Please try again shortly.',
+      });
+    }
+    if (!res.ok) {
+      logger.error({ status: res.status }, 'Resend rejected the message');
+      throw new AppError({
+        status: 503,
+        code: 'email/provider-unavailable',
+        message: 'Email cannot be sent right now. Please try again shortly.',
+      });
+    }
+  }
+}
+
 export function createEmailProvider(): EmailProvider {
   const env = loadEnv();
   if (env.EMAIL_PROVIDER === 'smtp') {
@@ -118,6 +172,9 @@ export function createEmailProvider(): EmailProvider {
       pass: env.SMTP_PASS,
       from: env.EMAIL_FROM,
     });
+  }
+  if (env.EMAIL_PROVIDER === 'resend') {
+    return new ResendEmailProvider(env.RESEND_API_KEY, env.RESEND_FROM || env.EMAIL_FROM);
   }
   if (env.NODE_ENV === 'production') {
     throw new Error('EMAIL_PROVIDER=fake is not allowed when NODE_ENV=production');
