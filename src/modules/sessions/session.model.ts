@@ -28,6 +28,7 @@ const customerSessionSchema = new Schema<CustomerSessionShape>(
     gracePreviousHash: String,
     graceUntil: Date,
     rotationCount: { type: Number, default: 0 },
+    persistent: { type: Boolean, default: true },
     revokedAt: Date,
     revokedReason: String,
     absoluteExpiresAt: { type: Date, required: true },

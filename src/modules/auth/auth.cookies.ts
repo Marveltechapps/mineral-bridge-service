@@ -23,18 +23,21 @@ function secure(): boolean {
   return env.COOKIE_SECURE || env.NODE_ENV === 'production';
 }
 
-export function webRefreshCookieOptions(): CookieOptions {
-  return {
+export function webRefreshCookieOptions(persistent = true): CookieOptions {
+  const options: CookieOptions = {
     httpOnly: true,
     secure: secure(),
     sameSite: 'strict',
     path: WEB_REFRESH_COOKIE_PATH,
-    maxAge: loadEnv().WEB_REFRESH_TTL_SECONDS * 1000,
   };
+  // A session cookie (no Max-Age) is dropped when the browser session ends.
+  // The refresh token's server-side expiry is unchanged.
+  if (persistent) options.maxAge = loadEnv().WEB_REFRESH_TTL_SECONDS * 1000;
+  return options;
 }
 
-export function setWebRefreshCookie(res: Response, refreshToken: string): void {
-  res.cookie(loadEnv().WEB_REFRESH_COOKIE_NAME, refreshToken, webRefreshCookieOptions());
+export function setWebRefreshCookie(res: Response, refreshToken: string, persistent = true): void {
+  res.cookie(loadEnv().WEB_REFRESH_COOKIE_NAME, refreshToken, webRefreshCookieOptions(persistent));
 }
 
 export function clearWebRefreshCookie(res: Response): void {

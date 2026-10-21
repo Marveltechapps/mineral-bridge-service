@@ -76,6 +76,7 @@ export function challengeBody(info: ChallengeInfo) {
     maskedDestination: info.maskedDestination,
     expiresAt: info.expiresAt.toISOString(),
     resendAvailableAt: info.resendAvailableAt.toISOString(),
+    ...(info.developmentOtp ? { developmentOtp: info.developmentOtp } : {}),
   };
 }
 
@@ -101,19 +102,24 @@ async function issueStaffChallenge(
 }
 
 /**
+ * Password sign-in checks the staff record and opens the console session.
  * `401 auth/invalid-credentials` never says whether the email exists. A disabled account is only
- * revealed (`403 auth/account-disabled`) after the *correct* password, so it leaks nothing.
+ * revealed (`403 auth/account-disabled`) after the correct password. OTP verification stays
+ * available for challenges that already exist, and does not run as part of this step.
  */
 export async function signIn(input: {
   email: string;
   password: string;
   ip?: string;
   returnTo?: string;
-}): Promise<ChallengeInfo> {
+  device?: DeviceInfo;
+}): Promise<{ issued: IssuedStaffSession; staff: StaffRecord; redirectTo: string }> {
   const staff = await verifyCredentials(input.email, input.password);
   if (!staff) throw unauthorized('auth/invalid-credentials', 'Incorrect email or password.');
   if (staff.disabled) throw forbidden('auth/account-disabled', 'This account has been disabled. Contact your administrator.');
-  return issueStaffChallenge(staff, { ip: input.ip, returnTo: input.returnTo });
+  const issued = await createStaffSession({ staffId: staff.id, device: { ...input.device, ip: input.ip } });
+  await recordStaffLogin(staff.id);
+  return { issued, staff, redirectTo: sanitizeReturnTo(input.returnTo) };
 }
 
 // ---- SSO (#2/#3) ----------------------------------------------------------------------------

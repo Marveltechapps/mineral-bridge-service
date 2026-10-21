@@ -3,6 +3,7 @@ import { validate } from '../../common/middleware/validate.js';
 import { asyncHandler } from '../../common/utils/async-handler.js';
 import { requireUser, requireWebCookieOrigin } from './auth.middleware.js';
 import * as ctrl from './web.auth.controller.js';
+import { mountCustomerDevLogin } from './dev-login.routes.js';
 import {
   webDeleteAccountBody,
   webOtpRequestBody,
@@ -24,6 +25,8 @@ export function createWebAuthRouter(): Router {
   const r = Router();
 
   // Public
+  mountCustomerDevLogin(r);
+  r.get('/auth/verification-options', asyncHandler(ctrl.verificationOptions));
   r.post('/auth/register', validate({ body: webRegisterBody }), asyncHandler(ctrl.register));
   r.post('/auth/otp/request', validate({ body: webOtpRequestBody }), asyncHandler(ctrl.otpRequest));
   r.post('/auth/otp/verify', validate({ body: webOtpVerifyBody }), asyncHandler(ctrl.otpVerify));

@@ -5,7 +5,7 @@ import { ah } from '../../common/http/async-handler.js';
 import { validate } from '../../common/middleware/validate.js';
 import { iso } from '../../common/utils/time-display.js';
 import type { IAsmRegistration } from '../../models/web-trade.model.js';
-import { requireUser } from '../auth/auth.middleware.js';
+import { requireKyc, requireUser } from '../auth/auth.middleware.js';
 import { asmService as svc, evaluateEligibility, missingForSubmit } from './asm.service.js';
 
 const answers = z.object({
@@ -87,7 +87,7 @@ export function webAsmRouter(): Router {
   r.post('/asm/registrations/:registrationId/documents', requireUser, id, validate({ body: docBody }), ah(async (req, res) => {
     res.status(201).json(toWebAsm(await svc.addDocument(currentUserId(req), String(req.params.registrationId), req.body.key, req.body.fileId)));
   }));
-  r.post('/asm/registrations/:registrationId/submit', requireUser, id, ah(async (req, res) => {
+  r.post('/asm/registrations/:registrationId/submit', requireUser, requireKyc, id, ah(async (req, res) => {
     res.json(toWebAsm(await svc.submit(currentUserId(req), String(req.params.registrationId))));
   }));
 

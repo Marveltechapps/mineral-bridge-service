@@ -21,9 +21,11 @@ import {
 // #1 POST /auth/sign-in
 export async function signInHandler(req: Request, res: Response): Promise<void> {
   const b = req.body as { email: string; password: string; returnTo?: string };
-  const info = await signIn({ ...b, ip: clientIp(req) });
+  const { issued, staff, redirectTo } = await signIn({ ...b, ip: clientIp(req), device: deviceFromRequest(req) });
+  setAdminSessionCookie(res, issued.sessionToken);
+  res.setHeader('X-CSRF-Token', issued.csrfToken);
   noStore(res);
-  res.status(200).json(challengeBody(info));
+  res.status(200).json({ me: buildMe(staff, issued.session, issued.csrfToken), redirectTo });
 }
 
 // #2 POST /auth/sso/start
@@ -58,6 +60,7 @@ export async function otpResend(req: Request, res: Response): Promise<void> {
   res.status(200).json({
     maskedDestination: info.maskedDestination,
     resendAvailableAt: info.resendAvailableAt.toISOString(),
+    ...(info.developmentOtp ? { developmentOtp: info.developmentOtp } : {}),
   });
 }
 

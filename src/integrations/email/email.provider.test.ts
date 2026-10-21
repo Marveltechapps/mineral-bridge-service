@@ -30,13 +30,26 @@ describe('ResendEmailProvider', () => {
     const provider = new ResendEmailProvider('test-key', 'Mineral Bridge <otp@example.com>', fetchImpl as unknown as typeof fetch);
     await expect(provider.send({ to: 'a@x.com', subject: 'code', text: 'secret-code' })).rejects.toMatchObject({
       code: 'email/provider-unavailable',
+      message: "We couldn't send your verification code right now. Please try again or choose another verification method.",
     });
   });
 
-  it('resolves only after a 2xx response', async () => {
+  it('names an unverified sending domain', async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response('{"name":"validation_error","message":"The domain is not verified."}', { status: 403 }),
+    );
+    const provider = new ResendEmailProvider('test-key', 'Mineral Bridge <otp@example.com>', fetchImpl as unknown as typeof fetch);
+    await expect(provider.send({ to: 'a@x.com', subject: 'code', text: 'secret-code' })).rejects.toMatchObject({
+      message: "We couldn't send your verification code right now. Please try again or choose another verification method.",
+    });
+  });
+
+  it('resolves only after a 2xx response and keeps the provider id', async () => {
     const fetchImpl = vi.fn(async () => new Response('{"id":"email_1"}', { status: 200 }));
     const provider = new ResendEmailProvider('test-key', 'Mineral Bridge <otp@example.com>', fetchImpl as unknown as typeof fetch);
-    await provider.send({ to: 'a@x.com', subject: 'code', text: 'secret-code' });
+    await expect(provider.send({ to: 'a@x.com', subject: 'code', text: 'secret-code' })).resolves.toEqual({
+      providerMessageId: 'email_1',
+    });
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 });

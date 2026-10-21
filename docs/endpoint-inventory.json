@@ -3241,7 +3241,7 @@
           "permission": null,
           "domain": "Auth & Session",
           "screens": "Login → **Sign in**",
-          "purpose": "Check email + password, start the 2FA challenge"
+          "purpose": "Check email + password and open the staff session"
         },
         {
           "n": 2,

@@ -61,6 +61,14 @@ const envSchema = z.object({
    * The filled message is never logged.
    */
   OTP_SMS_MESSAGE: z.string().optional(),
+  /**
+   * When "1" or "true", a SpearUC body of "Campaign successfully Sent" is acceptance
+   * even if the gateway also marks the payload as an error.
+   */
+  SMS_GATEWAY_ACCEPT_CAMPAIGN: z
+    .string()
+    .optional()
+    .transform((v) => v === '1' || v === 'true'),
   OTP_TTL_SECONDS: z.coerce.number().int().positive().default(60),
   OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
   OTP_MAX_PER_PHONE_15MIN: z.coerce.number().int().positive().default(3),
@@ -93,6 +101,35 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+
+  /**
+   * Development-only login. Off unless this is exactly "true" or "1" AND NODE_ENV=development.
+   * Production ignores the flag. Credentials and the optional fixed OTP live here, never in source.
+   */
+  DEV_LOGIN_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+  DEV_LOGIN_EMAIL: z.string().optional(),
+  DEV_LOGIN_PASSWORD: z.string().optional(),
+  /** Optional fixed local code. Empty means a code is generated per challenge. Rejected when weak. */
+  DEV_LOGIN_OTP: z.string().optional(),
+  DEV_ADMIN_LOGIN_EMAIL: z.string().optional(),
+  DEV_ADMIN_LOGIN_PASSWORD: z.string().optional(),
+  DEV_ADMIN_LOGIN_OTP: z.string().optional(),
+  /** Explicit grants, for example `orders:view,vault:view`. Unlisted modules stay `none`. */
+  DEV_ADMIN_PERMISSIONS: z.string().optional(),
+  DEV_LOGIN_OTP_TTL_SECONDS: z.coerce.number().int().positive().default(120),
+  DEV_LOGIN_MAX_CREDENTIAL_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  /**
+   * Local signup/login OTP display. Separate from DEV_LOGIN_*.
+   * Active only when this is "true" or "1" AND NODE_ENV=development.
+   * Production never returns a code, even if this flag is set.
+   */
+  DEV_OTP_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
 
   PUBLIC_API_BASE_URL: z.string().url().default('http://localhost:4000'),
 

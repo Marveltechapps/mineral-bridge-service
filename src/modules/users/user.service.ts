@@ -218,7 +218,30 @@ export async function findOrCreateFromWebRegistration(
   }
 }
 
-/** Web login: returns the existing account (and marks the channel verified) or null. */
+export const DUPLICATE_EMAIL_MESSAGE = 'An account already uses this email address. Log in instead.';
+export const DUPLICATE_MOBILE_MESSAGE = 'An account already uses this mobile number. Log in instead.';
+
+/**
+ * Rejects a registration when the email or mobile already belongs to an account.
+ * The account itself is still created only after the chosen OTP succeeds.
+ */
+export async function assertWebRegistrationAvailable(input: {
+  method: 'mobile' | 'email' | 'whatsapp';
+  identifier: string;
+  email?: string;
+  phone?: string;
+}): Promise<void> {
+  const email = input.email ?? (input.method === 'email' ? input.identifier : undefined);
+  const phone = input.phone ?? (input.method === 'email' ? undefined : input.identifier);
+  if (email && (await userRepository.findByEmail(email))) {
+    throw conflict('auth/duplicate-email', DUPLICATE_EMAIL_MESSAGE);
+  }
+  if (phone && (await userRepository.findByPhone(phone))) {
+    throw conflict('auth/duplicate-mobile', DUPLICATE_MOBILE_MESSAGE);
+  }
+}
+
+/** Web login: returns the existing account or null. Verification is applied separately. */
 export async function findForWebLogin(
   method: 'mobile' | 'email' | 'whatsapp',
   identifier: string,

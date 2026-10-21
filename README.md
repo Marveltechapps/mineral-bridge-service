@@ -77,11 +77,12 @@ npm run seed
 * Reference data: categories, minerals, units, countries.
 * Roles with permission matrices, platform settings, sample reference rates.
 * One CEO admin: `SEED_ADMIN_EMAIL` (default `ceo@mineralbridge.co.ke`), password `SEED_ADMIN_PASSWORD`
-  (default `ChangeMe!Admin1` – change it on first sign-in), OTP phone `SEED_ADMIN_PHONE`.
+  (default `ChangeMe!Admin1` – change it on first sign-in). Re-running the seed sets that password
+  when the stored hash does not already match, and leaves every other staff row unchanged.
 
-Signing in to the admin API is two steps: `POST /admin/v1/auth/sign-in` (email + password) then
-`POST /admin/v1/auth/otp/verify`. With `OTP_PROVIDER=fake` (the default) the code is written to the server log.
-The verify response returns the CSRF token to send as `X-CSRF-Token` on every mutation.
+`POST /admin/v1/auth/sign-in` checks the email and password and returns the staff session cookie plus
+`X-CSRF-Token`. Send that token on every mutation. `POST /admin/v1/auth/otp/verify` remains for a
+challenge that was already issued.
 
 ## Scripts
 

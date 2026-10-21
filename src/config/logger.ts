@@ -13,6 +13,7 @@ const SENSITIVE_KEYS = new Set([
   'cookie',
   'csrfToken',
   'secret',
+  'developmentotp',
 ]);
 
 function redact(value: unknown): unknown {
@@ -40,6 +41,8 @@ export function createLogger() {
         'body.password',
         'body.otp',
         'body.code',
+        'body.developmentOtp',
+        'developmentOtp',
         'body.refreshToken',
         'body.pin',
       ],

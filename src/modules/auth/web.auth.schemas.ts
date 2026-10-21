@@ -51,10 +51,12 @@ export const webOtpRequestBody = z
     }
   });
 
-/** The web contract fixes the code at 4 digits (`codeLength: 4`). */
+/** Production web codes stay 4 digits. Development OTP challenges are 6 digits. */
 export const webOtpVerifyBody = z.object({
   challengeId,
-  code: z.string().regex(/^\d{4}$/, 'Enter the 4-digit code'),
+  code: z.string().regex(/^\d{4}$|^\d{6}$/, 'Enter the verification code'),
+  /** Absent or true keeps the existing persistent refresh cookie. */
+  rememberDevice: z.boolean().optional(),
 });
 
 /** W-7: the contract has no schema for resend; mirror mobile. */

@@ -65,7 +65,7 @@ export async function sendSms(to: string, text: string): Promise<void> {
       throw unavailable('sms/provider-down', 'SMS provider is unreachable');
     });
     const body = await res.text().catch(() => '');
-    if (!smsGatewayAccepted(res.ok, body)) {
+    if (!smsGatewayAccepted(res.ok, body, env.SMS_GATEWAY_ACCEPT_CAMPAIGN)) {
       logger.error({ status: res.status }, 'SMS gateway rejected message');
       throw unavailable('sms/provider-error', 'SMS provider rejected the message');
     }

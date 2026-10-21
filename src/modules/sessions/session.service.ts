@@ -129,6 +129,8 @@ export async function createCustomerSession(input: {
   client: CustomerClient;
   device?: DeviceInfo;
   now?: Date;
+  /** False only when the web user unchecks "Keep me signed in". Defaults to persistent. */
+  persistent?: boolean;
 }): Promise<IssuedCustomerSession> {
   const now = input.now ?? new Date();
   const publicId = opaqueId(IdPrefixes.session);
@@ -152,6 +154,7 @@ export async function createCustomerSession(input: {
     refreshTokenHash: hashToken(refreshToken),
     previousHashes: [],
     rotationCount: 0,
+    persistent: input.persistent !== false,
     absoluteExpiresAt: new Date(now.getTime() + refreshTtlSeconds(input.client) * 1000),
     lastUsedAt: now,
   });

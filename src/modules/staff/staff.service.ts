@@ -214,6 +214,48 @@ export async function setStaffPassword(staffId: string, newPassword: string): Pr
   );
 }
 
+/**
+ * Creates the bootstrap admin, or makes the existing row active with this password and the CEO role.
+ * Repeating the call does not add another staff row. Other staff records are left alone.
+ */
+export async function ensureBootstrapAdmin(input: {
+  email: string;
+  password: string;
+  name: string;
+  phone: string;
+}): Promise<'created' | 'updated' | 'unchanged'> {
+  const email = input.email.toLowerCase();
+  const existing = await findStaffByEmail(email);
+  if (!existing) {
+    await createStaff({
+      email,
+      password: input.password,
+      name: input.name,
+      phone: input.phone,
+      desk: 'Executive',
+      roleId: 'ROLE-CEO',
+    });
+    return 'created';
+  }
+  const role = getDefaultRole('ROLE-CEO');
+  if (!role) throw unprocessable('Unknown role.', { roleId: 'Unknown role' });
+  const passwordMatches = Boolean(await verifyCredentials(email, input.password));
+  if (passwordMatches && existing.role.id === role.id && !existing.disabled) return 'unchanged';
+  const $set: Record<string, unknown> = {
+    disabled: false,
+    role: { id: role.id, name: role.name, scope: role.scope },
+    permissions: permissionsForRole(role.id),
+  };
+  if (!passwordMatches) {
+    const passwordHash = await hashPassword(input.password);
+    $set.passwordHash = passwordHash;
+    $set.passwordHistory = [passwordHash];
+    $set.passwordChangedAt = new Date();
+  }
+  await StaffModel.updateOne({ _id: existing.id }, { $set, $unset: { disabledAt: 1 } });
+  return 'updated';
+}
+
 export async function recordStaffLogin(staffId: string, now = new Date()): Promise<void> {
   await StaffModel.updateOne({ _id: staffId }, { $set: { lastLoginAt: now } });
 }

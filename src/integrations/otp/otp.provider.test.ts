@@ -107,6 +107,44 @@ describe('SpearucOtpProvider', () => {
     expect(smsGatewayAccepted(false, 'success')).toBe(false);
   });
 
+  it('retries an Indian number as 10 national digits when the gateway reports no valid number', async () => {
+    const bodies = [
+      '{"status":"error","status_id":"error_1002","Message":"Atleast one number is required to send message"}',
+      '{"status":"success","campaign_id":"cmp_91","Message":"Message sent"}',
+    ];
+    const fetchImpl = vi.fn(async () => new Response(bodies.shift() ?? '', { status: 200 }));
+    const provider = new SpearucOtpProvider('http://sms.example.test/send?type=smsquicksend', 'Code {otp}', fetchImpl as unknown as typeof fetch);
+    const result = await provider.send({ to: '+919876543210', code: '1234', channel: 'sms', ttlSeconds: 300 });
+    expect(result).toEqual({ providerMessageId: 'cmp_91', delivered: false });
+    const calls = fetchImpl.mock.calls as unknown as [string][];
+    expect(new URL(calls[0][0]).searchParams.get('mobile')).toBe('919876543210');
+    expect(new URL(calls[1][0]).searchParams.get('mobile')).toBe('9876543210');
+    expect(JSON.stringify(result)).not.toContain('1234');
+  });
+
+  it('reports a number rejection when both Indian formats are refused', async () => {
+    const body = '{"status":"error","status_id":"error_1002","Message":"Atleast one number is required to send message"}';
+    const fetchImpl = vi.fn(async () => new Response(body, { status: 200 }));
+    const provider = new SpearucOtpProvider('http://sms.example.test/send?type=smsquicksend', 'Code {otp}', fetchImpl as unknown as typeof fetch);
+    await expect(provider.send({ to: '+919876543210', code: '1234', channel: 'sms', ttlSeconds: 300 })).rejects.toMatchObject({
+      status: 422,
+      code: 'auth/invalid-phone',
+      message: "We couldn't send an SMS verification code to this number. Please check the number or verify using email.",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats a SpearUC campaign acknowledgement as acceptance when that flag is on', async () => {
+    const body = '{"status":"error","Message":"Campaign successfully Sent"}';
+    expect(smsGatewayAccepted(true, body, false)).toBe(false);
+    expect(smsGatewayAccepted(true, body, true)).toBe(true);
+    const fetchImpl = vi.fn(async () => new Response(body, { status: 200 }));
+    const provider = new SpearucOtpProvider('http://sms.example.test/send', 'Code {otp}', fetchImpl as unknown as typeof fetch, true);
+    await expect(provider.send({ to: '+2348024419087', code: '1234', channel: 'sms', ttlSeconds: 300 })).resolves.toMatchObject({
+      delivered: false,
+    });
+  });
+
   it('does not treat the gateway missing-number error as acceptance', () => {
     const body = '{"status":"error","Message":"Atleast one number is required to send message","status_id":"error_1002"}';
     expect(smsGatewayAccepted(true, body)).toBe(false);
@@ -129,7 +167,8 @@ describe('createOtpProvider', () => {
     expect(() => mod.createOtpProvider()).toThrow(/not allowed/);
   });
 
-  it('builds the fake provider outside production', () => {
-    expect(createOtpProvider().name).toBe('fake');
+  it('builds the provider named by the environment outside production', async () => {
+    const { loadEnv } = await import('../../config/env.js');
+    expect(createOtpProvider().name).toBe(loadEnv().OTP_PROVIDER);
   });
 });

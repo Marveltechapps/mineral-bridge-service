@@ -101,6 +101,81 @@ async function main(): Promise<void> {
     }
   }
 
+  const devResponses = {
+    '200': { description: 'Success' },
+    '401': { $ref: '#/components/responses/Error' },
+    '404': { description: 'auth/dev-login-disabled when the feature is off or NODE_ENV is not development' },
+    '409': { $ref: '#/components/responses/Error' },
+    '422': { $ref: '#/components/responses/Error' },
+    '429': { $ref: '#/components/responses/Error' },
+  };
+  const devChallenge = {
+    type: 'object',
+    required: ['challengeId', 'codeLength', 'developmentOtp'],
+    properties: {
+      challengeId: { type: 'string' },
+      expiresIn: { type: 'integer' },
+      expiresAt: { type: 'string', format: 'date-time' },
+      codeLength: { type: 'integer', enum: [6] },
+      developmentOtp: { type: 'string', description: 'Returned only by the development login challenge endpoint.' },
+      channel: { type: 'string' },
+      maskedDestination: { type: 'string' },
+      resendAvailableAt: { type: 'string', format: 'date-time' },
+    },
+  };
+  function devPath(tags: string[], summary: string, method: 'get' | 'post' = 'get', schema?: Record<string, unknown>) {
+    return {
+      tags,
+      summary,
+      description: 'Development only. Rejected unless NODE_ENV=development and DEV_LOGIN_ENABLED=true. The client cannot choose a role.',
+      security: [],
+      requestBody: method === 'post' && schema ? { required: true, content: { 'application/json': { schema } } } : undefined,
+      responses: JSON.parse(JSON.stringify(devResponses)) as Record<string, { description: string; content?: unknown }>,
+    };
+  }
+  paths['/v1/auth/dev-login'] = {
+    get: devPath(['mobile', 'web'], 'Whether application development login is enabled'),
+    post: devPath(['mobile', 'web'], 'Start application development login', 'post', {
+      type: 'object',
+      required: ['email', 'password'],
+      properties: { email: { type: 'string', format: 'email' }, password: { type: 'string' } },
+    }),
+  };
+  paths['/v1/auth/dev-login']!.post.responses['200'] = {
+    description: 'Challenge. developmentOtp is included only here.',
+    content: { 'application/json': { schema: devChallenge } },
+  };
+  paths['/v1/auth/dev-login/verify'] = {
+    post: devPath(['mobile', 'web'], 'Verify the application development code and issue the normal customer session', 'post', {
+      type: 'object',
+      required: ['challengeId', 'code'],
+      properties: {
+        challengeId: { type: 'string' },
+        code: { type: 'string', pattern: '^\\d{6}$' },
+        rememberDevice: { type: 'boolean' },
+      },
+    }),
+  };
+  paths['/admin/v1/auth/dev-login'] = {
+    get: devPath(['admin'], 'Whether admin development login is enabled'),
+    post: devPath(['admin'], 'Start admin development login', 'post', {
+      type: 'object',
+      required: ['email', 'password'],
+      properties: { email: { type: 'string', format: 'email' }, password: { type: 'string' } },
+    }),
+  };
+  paths['/admin/v1/auth/dev-login']!.post.responses['200'] = {
+    description: 'Challenge. developmentOtp is included only here.',
+    content: { 'application/json': { schema: devChallenge } },
+  };
+  paths['/admin/v1/auth/dev-login/verify'] = {
+    post: devPath(['admin'], 'Verify the admin development code and issue the normal staff session', 'post', {
+      type: 'object',
+      required: ['challengeId', 'code'],
+      properties: { challengeId: { type: 'string' }, code: { type: 'string', pattern: '^\\d{6}$' } },
+    }),
+  };
+
   const doc = {
     openapi: '3.0.3',
     info: {

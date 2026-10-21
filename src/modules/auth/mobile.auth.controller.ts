@@ -50,6 +50,7 @@ function otpBody(info: ChallengeInfo, intent: string) {
     channel: info.channel,
     maskedPhone: info.maskedDestination,
     accountExists: intent === 'login',
+    ...(info.developmentOtp ? { developmentOtp: info.developmentOtp } : {}),
   };
 }
 

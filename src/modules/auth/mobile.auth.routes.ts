@@ -3,6 +3,7 @@ import { validate } from '../../common/middleware/validate.js';
 import { asyncHandler } from '../../common/utils/async-handler.js';
 import { requireTransactionPin, requireUser } from './auth.middleware.js';
 import * as ctrl from './mobile.auth.controller.js';
+import { mountCustomerDevLogin } from './dev-login.routes.js';
 import {
   mobileAlternateChannelBody,
   mobileOtpRequestBody,
@@ -21,6 +22,7 @@ import {
 export function createMobileAuthRouter(): Router {
   const r = Router();
 
+  mountCustomerDevLogin(r);
   // Pre-auth (#1–#5)
   r.post('/auth/otp/request', validate({ body: mobileOtpRequestBody }), asyncHandler(ctrl.otpRequest));
   r.post('/auth/otp/verify', validate({ body: mobileOtpVerifyBody }), asyncHandler(ctrl.otpVerify));

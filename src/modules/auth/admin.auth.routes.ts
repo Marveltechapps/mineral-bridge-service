@@ -13,6 +13,7 @@ import {
   adminUnlockBody,
 } from './admin.auth.schemas.js';
 import { optionalStaff, requireCsrf, requireStaff, requireUnlockedConsole } from './auth.middleware.js';
+import { mountAdminDevLogin } from './dev-login.routes.js';
 
 /**
  * Admin auth under `/admin/v1`.
@@ -24,6 +25,7 @@ import { optionalStaff, requireCsrf, requireStaff, requireUnlockedConsole } from
 export function createAdminAuthRouter(): Router {
   const r = Router();
 
+  mountAdminDevLogin(r);
   r.post('/auth/sign-in', validate({ body: adminSignInBody }), asyncHandler(ctrl.signInHandler));
   r.post('/auth/sso/start', validate({ body: adminSsoStartBody }), asyncHandler(ctrl.ssoStart));
   r.post('/auth/sso/callback', validate({ body: adminSsoCallbackBody }), asyncHandler(ctrl.ssoCallback));

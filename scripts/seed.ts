@@ -6,7 +6,8 @@
  *
  * Env: SEED_ADMIN_EMAIL (default ceo@mineralbridge.co.ke), SEED_ADMIN_PASSWORD (default ChangeMe!Admin1),
  *      SEED_ADMIN_PHONE (default +254700000001 — OTP codes are sent here), SEED_ADMIN_NAME.
- * Re-running never duplicates rows and never resets an existing admin password.
+ * Re-running never duplicates rows. The bootstrap admin password is set to SEED_ADMIN_PASSWORD
+ * when the stored hash does not already match it. Other staff records are not changed.
  */
 import 'dotenv/config';
 import { connectDatabase, disconnectDatabase } from '../src/config/database.js';
@@ -18,7 +19,7 @@ import { ensureSettings } from '../src/modules/admin/settings/settings.service.j
 import { parseUnitPrice } from '../src/modules/admin/shared/money.js';
 import { Bank, Country, Mineral, MineralCategory, Unit } from '../src/modules/reference/reference.model.js';
 import { DEFAULT_ROLES } from '../src/modules/staff/default-roles.js';
-import { createStaff, findStaffByEmail } from '../src/modules/staff/staff.service.js';
+import { ensureBootstrapAdmin } from '../src/modules/staff/staff.service.js';
 
 const ROLE_KIND: Record<string, string> = {
   'ROLE-CEO': 'executive',
@@ -153,28 +154,40 @@ async function seedAcademy(): Promise<void> {
   ]);
 }
 
-async function seedAdmin(): Promise<'created' | 'exists'> {
+async function seedAdmin(): Promise<'created' | 'updated' | 'unchanged'> {
   const email = (process.env.SEED_ADMIN_EMAIL ?? 'ceo@mineralbridge.co.ke').toLowerCase();
-  if (await findStaffByEmail(email)) return 'exists';
-  await createStaff({
+  return ensureBootstrapAdmin({
     email,
     password: process.env.SEED_ADMIN_PASSWORD ?? 'ChangeMe!Admin1',
     name: process.env.SEED_ADMIN_NAME ?? 'Platform CEO',
     phone: process.env.SEED_ADMIN_PHONE ?? '+254700000001',
-    desk: 'Executive',
-    roleId: 'ROLE-CEO',
   });
-  return 'created';
 }
 
 async function main(): Promise<void> {
-  await connectDatabase();
+  const db = await connectDatabase();
+  if (process.env.SEED_ONLY === 'admin') {
+    const admin = await seedAdmin();
+    logger.info(
+      {
+        admin,
+        email: (process.env.SEED_ADMIN_EMAIL ?? 'ceo@mineralbridge.co.ke').toLowerCase(),
+        database: db.connection.name,
+      },
+      'Bootstrap admin ready',
+    );
+    await disconnectDatabase();
+    return;
+  }
   await seedReference();
   await seedRoles();
   await seedRates();
   await seedAcademy();
   const admin = await seedAdmin();
-  logger.info({ admin, email: (process.env.SEED_ADMIN_EMAIL ?? 'ceo@mineralbridge.co.ke').toLowerCase() }, 'Seed complete — change the admin password on first sign-in');
+  logger.info(
+    { admin, email: (process.env.SEED_ADMIN_EMAIL ?? 'ceo@mineralbridge.co.ke').toLowerCase(), database: db.connection.name },
+    'Seed complete — change the admin password on first sign-in',
+  );
   await disconnectDatabase();
 }
 

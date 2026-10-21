@@ -7,6 +7,8 @@ import { loadEnv } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { getEmailProvider } from '../../integrations/email/email.provider.js';
 import { getOtpProvider } from '../../integrations/otp/otp.provider.js';
+import { isAcceptableDevOtp } from './dev-login.config.js';
+import { isDevelopmentOtpEnabled } from './dev-otp.js';
 import {
   OTP_THROTTLE_WINDOW_MS,
   OtpChallengeModel,
@@ -53,7 +55,7 @@ export function otpPolicy(client: OtpClient): OtpPolicy {
       };
     case 'web':
       return {
-        codeLength: 4,
+        codeLength: isDevelopmentOtpEnabled() ? 6 : 4,
         ttlSeconds: 300,
         resendCooldownSeconds: 30,
         maxAttempts: env.OTP_MAX_ATTEMPTS,
@@ -204,6 +206,28 @@ export interface ChallengeInfo {
   expiresInSeconds: number;
   resendAfterSeconds: number;
   resendAvailableAt: Date;
+  /** Present only for an enabled development challenge. Never logged. */
+  developmentOtp?: string;
+}
+
+interface SendSlot {
+  destKey: string;
+  ipKey: string | null;
+  at: Date;
+}
+
+function issueCode(length: number): string {
+  if (!isDevelopmentOtpEnabled() || length !== 6) return generateOtpDigits(length);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const code = generateOtpDigits(6);
+    if (isAcceptableDevOtp(code)) return code;
+  }
+  return generateOtpDigits(6);
+}
+
+function revealDevelopmentCode(code: string, decoy: boolean): string | undefined {
+  if (decoy || !isDevelopmentOtpEnabled()) return undefined;
+  return code;
 }
 
 function toInfo(c: Omit<OtpChallengeShape, 'codeHash'>, now: Date): ChallengeInfo {
@@ -230,26 +254,34 @@ async function deliver(
   destination: string,
   code: string,
   ttlSeconds: number,
-): Promise<void> {
+): Promise<{ provider: string; providerMessageId?: string; delivered: boolean }> {
   if (channel === 'email') {
-    await getEmailProvider().send({
+    const provider = getEmailProvider();
+    const sent = await provider.send({
       to: destination,
       subject: 'Your Mineral Bridge verification code',
       text: `Your Mineral Bridge verification code is ${code}. It expires in ${Math.ceil(ttlSeconds / 60)} minutes. If you did not request it, ignore this email.`,
     });
-    return;
+    return { provider: provider.name, providerMessageId: sent.providerMessageId, delivered: false };
   }
-  await getOtpProvider().send({ to: destination, code, channel, ttlSeconds });
+  const provider = getOtpProvider();
+  const result = await provider.send({ to: destination, code, channel, ttlSeconds });
+  return { provider: provider.name, providerMessageId: result.providerMessageId, delivered: result.delivered };
 }
 
 /** Records this send and enforces both limits (destination + IP). Insert-first so parallel bursts are still counted. */
+async function releaseSendSlot(slot: SendSlot): Promise<void> {
+  const keys = slot.ipKey ? [slot.destKey, slot.ipKey] : [slot.destKey];
+  await OtpSendLogModel.deleteMany({ key: { $in: keys }, at: slot.at });
+}
+
 async function enforceThrottle(
   client: OtpClient,
   destination: string,
   ip: string | undefined,
   policy: OtpPolicy,
   now: Date,
-): Promise<void> {
+): Promise<SendSlot> {
   const windowStart = new Date(now.getTime() - OTP_THROTTLE_WINDOW_MS);
   const destKey = hashToken(`dest:${client}:${destination}`);
   const ipKey = ip ? hashToken(`ip:${client}:${ip}`) : null;
@@ -276,6 +308,18 @@ async function enforceThrottle(
       throw fail(client, 'throttled', { retryAfterSeconds });
     }
   }
+  return { destKey, ipKey, at: now };
+}
+
+/** Counts a send against the destination and IP limits without creating a challenge. */
+export async function reserveOtpSendSlot(input: {
+  client: OtpClient;
+  destination: string;
+  ip?: string;
+  now?: Date;
+}): Promise<void> {
+  const now = input.now ?? new Date();
+  await enforceThrottle(input.client, input.destination, input.ip, otpPolicy(input.client), now);
 }
 
 export interface RequestChallengeInput {
@@ -303,10 +347,10 @@ export async function requestChallenge(input: RequestChallengeInput): Promise<Ch
     });
   }
 
-  await enforceThrottle(input.client, input.destination, input.ip, policy, now);
+  const slot = await enforceThrottle(input.client, input.destination, input.ip, policy, now);
 
   const challengeId = opaqueId('chl');
-  const code = generateOtpDigits(policy.codeLength);
+  const code = issueCode(policy.codeLength);
   const expiresAt = new Date(now.getTime() + policy.ttlSeconds * 1000);
   const shape: OtpChallengeShape = {
     challengeId,
@@ -336,13 +380,51 @@ export async function requestChallenge(input: RequestChallengeInput): Promise<Ch
 
   if (!input.decoy) {
     try {
-      await deliver(input.channel, input.destination, code, policy.ttlSeconds);
+      if (isDevelopmentOtpEnabled()) {
+        logger.info(
+          {
+            client: input.client,
+            intent: input.intent,
+            channel: input.channel,
+            maskedDestination: shape.maskedDestination,
+            delivery: 'development',
+          },
+          'Development OTP issued without an external provider',
+        );
+      } else {
+        const sent = await deliver(input.channel, input.destination, code, policy.ttlSeconds);
+        logger.info(
+          {
+            client: input.client,
+            intent: input.intent,
+            channel: input.channel,
+            maskedDestination: shape.maskedDestination,
+            provider: sent.provider,
+            providerMessageId: sent.providerMessageId,
+            delivered: sent.delivered,
+          },
+          'OTP provider accepted the request',
+        );
+      }
     } catch (err) {
       await OtpChallengeModel.deleteOne({ challengeId });
+      await releaseSendSlot(slot);
       throw err;
     }
+  } else {
+    logger.info(
+      {
+        client: input.client,
+        intent: input.intent,
+        channel: input.channel,
+        maskedDestination: shape.maskedDestination,
+        delivery: 'skipped',
+      },
+      'OTP challenge stored without sending',
+    );
   }
-  return toInfo(shape, now);
+  const revealed = revealDevelopmentCode(code, Boolean(input.decoy));
+  return revealed ? { ...toInfo(shape, now), developmentOtp: revealed } : toInfo(shape, now);
 }
 
 export async function getChallenge(challengeId: string, client: OtpClient): Promise<ChallengeView | null> {
@@ -360,7 +442,7 @@ export async function resendChallenge(input: {
   const now = input.now ?? new Date();
   const policy = otpPolicy(input.client);
   const existing = await getChallenge(input.challengeId, input.client);
-  if (!existing || existing.consumedAt) throw fail(input.client, 'not_found');
+  if (!existing || existing.consumedAt || existing.intent === 'dev_login') throw fail(input.client, 'not_found');
 
   const isLocked = Boolean(existing.lockedAt) || existing.attempts >= existing.maxAttempts;
   // Mobile: "5 wrong codes; new code required" => a resend clears the lock.
@@ -392,7 +474,7 @@ export async function resendChallenge(input: {
     });
   }
 
-  await enforceThrottle(input.client, existing.destination, input.ip, policy, now);
+  const slot = await enforceThrottle(input.client, existing.destination, input.ip, policy, now);
 
   const previous = await OtpChallengeModel.findOne({
     challengeId: existing.challengeId,
@@ -402,7 +484,7 @@ export async function resendChallenge(input: {
     .lean<LeanChallenge>();
   if (!previous) throw fail(input.client, 'not_found');
 
-  const code = generateOtpDigits(policy.codeLength);
+  const code = issueCode(policy.codeLength);
   const expiresAt = new Date(now.getTime() + policy.ttlSeconds * 1000);
   const updated = await OtpChallengeModel.findOneAndUpdate(
     {
@@ -415,6 +497,7 @@ export async function resendChallenge(input: {
         codeHash: existing.decoy
           ? hashOtpCode(existing.challengeId, `decoy:${generateOpaqueToken(8)}`)
           : hashOtpCode(existing.challengeId, code),
+        codeLength: policy.codeLength,
         channel,
         expiresAt,
         attempts: 0,
@@ -427,11 +510,37 @@ export async function resendChallenge(input: {
     },
     { new: true },
   ).lean<LeanChallenge>();
-  if (!updated) throw fail(input.client, 'cooldown', { retryAfterSeconds: policy.resendCooldownSeconds });
+  if (!updated) {
+    await releaseSendSlot(slot);
+    throw fail(input.client, 'cooldown', { retryAfterSeconds: policy.resendCooldownSeconds });
+  }
 
   if (!existing.decoy) {
     try {
-      await deliver(channel, existing.destination, code, policy.ttlSeconds);
+      if (isDevelopmentOtpEnabled()) {
+        logger.info(
+          {
+            client: input.client,
+            channel,
+            maskedDestination: existing.maskedDestination,
+            delivery: 'development',
+          },
+          'Development OTP reissued without an external provider',
+        );
+      } else {
+        const sent = await deliver(channel, existing.destination, code, policy.ttlSeconds);
+        logger.info(
+          {
+            client: input.client,
+            channel,
+            maskedDestination: existing.maskedDestination,
+            provider: sent.provider,
+            providerMessageId: sent.providerMessageId,
+            delivered: sent.delivered,
+          },
+          'OTP resend accepted by provider',
+        );
+      }
     } catch (err) {
       // The new hash was stored before the provider answered. Put the previous code back
       // so a failed send does not burn the code the person may already have.
@@ -452,11 +561,14 @@ export async function resendChallenge(input: {
           ...(previous.lockedAt ? {} : { $unset: { lockedAt: 1 as const } }),
         },
       );
+      await releaseSendSlot(slot);
       throw err;
     }
   }
   const record = toRecord(updated)!;
-  return { info: toInfo(record, now), challenge: record };
+  const info = toInfo(record, now);
+  const revealed = revealDevelopmentCode(code, existing.decoy);
+  return { info: revealed ? { ...info, developmentOtp: revealed } : info, challenge: record };
 }
 
 export interface VerifyChallengeInput {
@@ -466,6 +578,11 @@ export interface VerifyChallengeInput {
   /** Mobile also sends the phone; it must match the challenge or the attempt counts as wrong. */
   destination?: string;
   now?: Date;
+  /**
+   * Development-login challenges are refused here unless the development login
+   * service opts in. Customer and staff OTP verification must leave this unset.
+   */
+  allowDevelopment?: boolean;
 }
 
 /**
@@ -481,6 +598,9 @@ export async function verifyChallenge(input: VerifyChallengeInput): Promise<Chal
       .lean<LeanChallenge>(),
   );
   if (!existing || existing.consumedAt) throw fail(input.client, 'not_found');
+  if (existing.intent === 'dev_login' && input.allowDevelopment !== true) {
+    throw fail(input.client, 'not_found');
+  }
   if (existing.expiresAt.getTime() <= now.getTime()) throw fail(input.client, 'expired');
   if (existing.lockedAt || existing.attempts >= existing.maxAttempts) {
     throw fail(input.client, 'attempts_exceeded');

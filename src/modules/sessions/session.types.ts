@@ -39,6 +39,12 @@ export interface CustomerSessionShape {
   rotationCount: number;
   revokedAt?: Date;
   revokedReason?: RevokeReason;
+  /**
+   * Web "keep me signed in". True (or absent on older sessions) keeps the refresh
+   * cookie for the existing refresh TTL. False makes it a browser session cookie.
+   * The server-side absolute expiry is unchanged.
+   */
+  persistent?: boolean;
   /** Fixed at login (login + refresh TTL); rotation does not extend it. */
   absoluteExpiresAt: Date;
   lastUsedAt: Date;

@@ -131,7 +131,7 @@ describe('OTP request, verify, expiry, and resend', () => {
         throw new AppError({
           status: 503,
           code: 'email/provider-unavailable',
-          message: 'Email cannot be sent right now. Please try again shortly.',
+          message: "We couldn't send your verification code right now. Please try again or choose another verification method.",
         });
       },
     });

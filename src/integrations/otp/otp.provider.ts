@@ -2,6 +2,14 @@ import { AppError } from '../../common/errors/app-error.js';
 import { loadEnv } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 
+/** Shown when the gateway refuses the destination (sender, template, or number rules). */
+export const SMS_NUMBER_REJECTED_MESSAGE =
+  "We couldn't send an SMS verification code to this number. Please check the number or verify using email.";
+
+/** Shown when a provider is down or rejects the send for any other operational reason. */
+export const VERIFICATION_SEND_FAILED_MESSAGE =
+  "We couldn't send your verification code right now. Please try again or choose another verification method.";
+
 export type OtpDeliveryChannel = 'sms' | 'voice' | 'whatsapp';
 
 export interface OtpSendRequest {
@@ -45,7 +53,10 @@ export class FakeOtpProvider implements OtpProvider {
     this.codes.set(request.to, { code: request.code, channel: request.channel, at });
     this.sent.push({ to: request.to, channel: request.channel, at });
     if (loadEnv().NODE_ENV === 'development') {
-      logger.info({ to: request.to, channel: request.channel }, '[fake-otp] code captured for local development');
+      logger.info(
+        { to: request.to, channel: request.channel },
+        `[fake-otp] local development code ${request.code}`,
+      );
     }
     return { providerMessageId: `fake_${at.getTime()}`, delivered: false };
   }
@@ -87,7 +98,7 @@ export class TwilioOtpProvider implements OtpProvider {
       throw new AppError({
         status: 503,
         code: 'otp/provider-unavailable',
-        message: 'Verification codes cannot be sent right now. Please try again shortly.',
+        message: VERIFICATION_SEND_FAILED_MESSAGE,
         // The real reason is operational detail — never shown to clients.
         details: undefined,
       });
@@ -140,7 +151,7 @@ export class TwilioOtpProvider implements OtpProvider {
       throw new AppError({
         status: 503,
         code: 'otp/provider-unavailable',
-        message: 'Verification codes cannot be sent right now. Please try again shortly.',
+        message: VERIFICATION_SEND_FAILED_MESSAGE,
       });
     }
 
@@ -151,8 +162,8 @@ export class TwilioOtpProvider implements OtpProvider {
         code: res.status === 400 ? 'auth/invalid-phone' : 'otp/provider-unavailable',
         message:
           res.status === 400
-            ? 'That number cannot receive verification codes.'
-            : 'Verification codes cannot be sent right now. Please try again shortly.',
+            ? SMS_NUMBER_REJECTED_MESSAGE
+            : VERIFICATION_SEND_FAILED_MESSAGE,
       });
     }
     const json = (await res.json().catch(() => ({}))) as { sid?: string; status?: string };
@@ -162,7 +173,7 @@ export class TwilioOtpProvider implements OtpProvider {
       throw new AppError({
         status: 503,
         code: 'otp/provider-unavailable',
-        message: 'Verification codes cannot be sent right now. Please try again shortly.',
+        message: VERIFICATION_SEND_FAILED_MESSAGE,
       });
     }
     return { providerMessageId: json.sid, delivered: status === 'delivered' || status === 'read' };
@@ -176,10 +187,11 @@ export class TwilioOtpProvider implements OtpProvider {
  * that explicitly says the message was sent. That acceptance is not handset delivery.
  */
 /** Gateway HTTP success is acceptance, not handset delivery. */
-export function smsGatewayAccepted(httpOk: boolean, body: string): boolean {
+export function smsGatewayAccepted(httpOk: boolean, body: string, acceptCampaign = false): boolean {
   if (!httpOk) return false;
   const text = body.trim();
   if (!text) return false;
+  if (acceptCampaign && /campaign successfully sent/i.test(text)) return true;
   try {
     const json = JSON.parse(text) as { status?: unknown };
     const status = String(json.status ?? '').toLowerCase();
@@ -202,14 +214,18 @@ export class SpearucOtpProvider implements OtpProvider {
     private readonly vendorUrl: string | undefined,
     private readonly messageTemplate: string | undefined = undefined,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly acceptCampaign = false,
   ) {}
 
-  async send(request: OtpSendRequest): Promise<OtpSendResult> {
+  private async submit(
+    request: OtpSendRequest,
+    mobile: string,
+  ): Promise<{ httpOk: boolean; httpStatus: number; body: string }> {
     if (!this.vendorUrl) {
       throw new AppError({
         status: 503,
         code: 'otp/provider-unavailable',
-        message: 'Verification codes cannot be sent right now. Please try again shortly.',
+        message: VERIFICATION_SEND_FAILED_MESSAGE,
       });
     }
     if (request.channel !== 'sms') {
@@ -220,7 +236,7 @@ export class SpearucOtpProvider implements OtpProvider {
       });
     }
     const url = new URL(this.vendorUrl);
-    url.searchParams.set('mobile', request.to.replace(/^\+/, ''));
+    url.searchParams.set('mobile', mobile);
     const template = this.messageTemplate?.trim();
     const message = template?.includes('{otp}')
       ? template.replaceAll('{otp}', request.code)
@@ -234,21 +250,59 @@ export class SpearucOtpProvider implements OtpProvider {
       throw new AppError({
         status: 503,
         code: 'otp/provider-unavailable',
-        message: 'Verification codes cannot be sent right now. Please try again shortly.',
+        message: VERIFICATION_SEND_FAILED_MESSAGE,
       });
     }
     const text = await res.text().catch(() => '');
-    const accepted = smsGatewayAccepted(res.ok, text);
-    if (!accepted) {
-      logger.error({ status: res.status }, 'SMS gateway rejected OTP send');
+    return { httpOk: res.ok, httpStatus: res.status, body: text };
+  }
+
+  async send(request: OtpSendRequest): Promise<OtpSendResult> {
+    const digits = request.to.replace(/^\+/, '');
+    const first = await this.submit(request, digits);
+    const retryNational = !smsGatewayAccepted(first.httpOk, first.body, this.acceptCampaign) ? indianNational(digits) : null;
+    const outcome =
+      retryNational && gatewayStatusId(first.body) === 'error_1002' ? await this.submit(request, retryNational) : first;
+    if (!smsGatewayAccepted(outcome.httpOk, outcome.body, this.acceptCampaign)) {
+      const providerStatus = gatewayStatusId(outcome.body) || 'rejected';
+      logger.error({ status: outcome.httpStatus, providerStatus }, 'SMS gateway rejected OTP send');
+      const numberRejected = providerStatus === 'error_1002';
       throw new AppError({
-        status: 503,
-        code: 'otp/provider-unavailable',
-        message: 'Verification codes cannot be sent right now. Please try again shortly.',
+        status: numberRejected ? 422 : 503,
+        code: numberRejected ? 'auth/invalid-phone' : 'otp/provider-unavailable',
+        message: numberRejected ? SMS_NUMBER_REJECTED_MESSAGE : VERIFICATION_SEND_FAILED_MESSAGE,
       });
     }
-    return { providerMessageId: `spearuc_${Date.now()}`, delivered: false };
+    return { providerMessageId: spearucMessageId(outcome.body), delivered: false };
   }
+}
+
+/** SpearUC drops numbers that are not a 10-digit Indian mobile and answers error_1002. */
+function indianNational(digits: string): string | null {
+  return /^91[6-9]\d{9}$/.test(digits) ? digits.slice(2) : null;
+}
+
+function gatewayStatusId(body: string): string {
+  try {
+    const json = JSON.parse(body) as { status_id?: unknown };
+    return String(json.status_id ?? '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function spearucMessageId(body: string): string | undefined {
+  const trimmed = body.trim();
+  try {
+    const json = JSON.parse(trimmed) as Record<string, unknown>;
+    for (const key of ['campaign_id', 'message_id', 'msg_id', 'id']) {
+      const value = json[key];
+      if (typeof value === 'string' || typeof value === 'number') return String(value);
+    }
+  } catch {
+    /* Plain text or a bare id. */
+  }
+  return /^\d{1,20}$/.test(trimmed) ? trimmed : undefined;
 }
 
 /** `OTP_PROVIDER=africastalking` is accepted by env validation but not implemented yet. */
@@ -258,7 +312,7 @@ export class UnavailableOtpProvider implements OtpProvider {
     throw new AppError({
       status: 503,
       code: 'otp/provider-unavailable',
-      message: 'Verification codes cannot be sent right now. Please try again shortly.',
+      message: VERIFICATION_SEND_FAILED_MESSAGE,
     });
   }
 }
@@ -279,10 +333,20 @@ export function createOtpProvider(): OtpProvider {
         whatsappFrom: env.TWILIO_WHATSAPP_FROM,
       });
     case 'spearuc':
-      return new SpearucOtpProvider(env.SMS_VENDOR_URL, env.OTP_SMS_MESSAGE);
+      return new SpearucOtpProvider(env.SMS_VENDOR_URL, env.OTP_SMS_MESSAGE, fetch, env.SMS_GATEWAY_ACCEPT_CAMPAIGN);
     default:
       return new UnavailableOtpProvider(env.OTP_PROVIDER);
   }
+}
+
+/** True when this process can attempt an SMS code. Fake is limited to non-production. */
+export function isSmsDeliveryConfigured(env = loadEnv()): boolean {
+  if (env.OTP_PROVIDER === 'twilio') {
+    return Boolean(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && (env.TWILIO_FROM_NUMBER || env.TWILIO_SMS_FROM));
+  }
+  if (env.OTP_PROVIDER === 'spearuc') return Boolean(env.SMS_VENDOR_URL);
+  if (env.OTP_PROVIDER === 'fake') return env.NODE_ENV !== 'production';
+  return false;
 }
 
 let current: OtpProvider | null = null;

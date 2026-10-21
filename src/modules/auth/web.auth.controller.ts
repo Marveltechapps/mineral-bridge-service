@@ -21,6 +21,7 @@ import { clientIp, describeUserAgent, deviceFromRequest, noStore } from './auth.
 import { getUserContext } from './auth.middleware.js';
 import {
   changeWebPassword,
+  customerVerificationChannels,
   refreshCustomerTokens,
   registerWeb,
   requestWebOtp,
@@ -32,8 +33,6 @@ import { verifyAccessToken } from './auth.tokens.js';
 import type { ChallengeInfo } from './otp.service.js';
 import type { WebOtpRequestBody, WebRegisterBody } from './web.auth.schemas.js';
 
-const WEB_CODE_LENGTH = 4 as const;
-
 function challengeBody(info: ChallengeInfo) {
   return {
     challengeId: info.challengeId,
@@ -41,7 +40,8 @@ function challengeBody(info: ChallengeInfo) {
     target: info.maskedDestination,
     expiresIn: info.expiresInSeconds,
     resendAfter: info.resendAfterSeconds,
-    codeLength: WEB_CODE_LENGTH,
+    codeLength: info.codeLength,
+    ...(info.developmentOtp ? { developmentOtp: info.developmentOtp } : {}),
   };
 }
 
@@ -83,6 +83,11 @@ export function setUnreadNotificationCounter(fn: (userId: string) => Promise<num
   unreadCounter = fn;
 }
 
+/** Channels this server can send. The client still hides a channel the user did not enter. */
+export function verificationOptions(_req: Request, res: Response): void {
+  res.status(200).json(customerVerificationChannels());
+}
+
 // POST /auth/register
 export async function register(req: Request, res: Response): Promise<void> {
   const b = req.body as WebRegisterBody;
@@ -106,7 +111,7 @@ export async function register(req: Request, res: Response): Promise<void> {
   res.status(201).json(challengeBody(info));
 }
 
-// POST /auth/otp/request — identical response whether or not the account exists
+// POST /auth/otp/request — unknown logins are rejected; they are not signed in
 export async function otpRequest(req: Request, res: Response): Promise<void> {
   const b = req.body as WebOtpRequestBody;
   const identifier = b.method === 'email' ? normalizeEmail(b.identifier)! : normalizePhone(b.identifier)!;
@@ -125,13 +130,18 @@ export async function otpResend(req: Request, res: Response): Promise<void> {
 
 // POST /auth/otp/verify
 export async function otpVerify(req: Request, res: Response): Promise<void> {
-  const { challengeId, code } = req.body as { challengeId: string; code: string };
+  const { challengeId, code, rememberDevice } = req.body as {
+    challengeId: string;
+    code: string;
+    rememberDevice?: boolean;
+  };
   const { tokens, user, isNewAccount } = await verifyWebOtp({
     challengeId,
     code,
     device: deviceFromRequest(req),
+    rememberDevice,
   });
-  setWebRefreshCookie(res, tokens.refreshToken);
+  setWebRefreshCookie(res, tokens.refreshToken, tokens.session.persistent !== false);
   noStore(res);
   res.status(200).json({
     accessToken: tokens.accessToken,
@@ -157,7 +167,7 @@ export async function refresh(req: Request, res: Response): Promise<void> {
       device: { ip: clientIp(req), userAgent: req.header('user-agent') ?? undefined },
     });
     // Within the 10 s grace window the winning request's cookie stays in place (no rotation).
-    if (out.refreshToken) setWebRefreshCookie(res, out.refreshToken);
+    if (out.refreshToken) setWebRefreshCookie(res, out.refreshToken, out.session.persistent !== false);
     noStore(res);
     res.status(200).json({ accessToken: out.accessToken, expiresIn: out.expiresIn, tokenType: 'Bearer' });
   } catch (err) {
@@ -201,13 +211,13 @@ export async function me(req: Request, res: Response): Promise<void> {
 export async function passwordChange(req: Request, res: Response): Promise<void> {
   const { user, session } = getUserContext(req);
   const { currentPassword, newPassword } = req.body as { currentPassword?: string; newPassword: string };
-  const { refreshToken } = await changeWebPassword({
+  const { refreshToken, persistent } = await changeWebPassword({
     userId: user.id,
     sessionPublicId: session.publicId,
     currentPassword,
     newPassword,
   });
-  if (refreshToken) setWebRefreshCookie(res, refreshToken);
+  if (refreshToken) setWebRefreshCookie(res, refreshToken, persistent);
   res.status(204).end();
 }
 
@@ -249,7 +259,7 @@ export async function deleteAccount(req: Request, res: Response): Promise<void> 
     // `openOrderCount` is a top-level contract field, so respond directly.
     res.status(409).json({
       code: 'auth/account-has-open-orders',
-      message: 'Open orders must settle before your account can be deleted.',
+      message: `Open orders must settle before your account can be deleted. ${result.blocking.length} open ${result.blocking.length === 1 ? 'order' : 'orders'}.`,
       openOrderCount: result.blocking.length,
       requestId: req.requestId,
     });

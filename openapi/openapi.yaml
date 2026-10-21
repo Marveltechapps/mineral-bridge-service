@@ -23,6 +23,81 @@ tags:
   - name: admin
     description: Operations dashboard (httpOnly session cookie + CSRF double-submit; `x-permission` = module:view|edit)
 paths:
+  /v1/auth/dev-login:
+    get:
+      tags: [web, mobile]
+      summary: Whether application development login is enabled
+      description: Rejected as disabled unless NODE_ENV=development and DEV_LOGIN_ENABLED=true. Clients cannot choose a role.
+      security: []
+      responses:
+        "200":
+          description: "{ enabled: boolean, codeLength?: 6 }"
+    post:
+      tags: [web, mobile]
+      summary: Start application development login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200":
+          description: Challenge. developmentOtp is returned only by this endpoint.
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: auth/dev-login-disabled
+        "429":
+          $ref: "#/components/responses/Error"
+  /v1/auth/dev-login/verify:
+    post:
+      tags: [web, mobile]
+      summary: Verify the application development code and issue the normal customer session
+      security: []
+      responses:
+        "200":
+          description: Same customer session as POST /v1/auth/otp/verify. developmentOtp is omitted.
+        "401":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /admin/v1/auth/dev-login:
+    get:
+      tags: [admin]
+      summary: Whether admin development login is enabled
+      security: []
+      responses:
+        "200":
+          description: "{ enabled: boolean, codeLength?: 6 }"
+    post:
+      tags: [admin]
+      summary: Start admin development login
+      security: []
+      responses:
+        "200":
+          description: Challenge. developmentOtp is returned only by this endpoint.
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: auth/dev-login-disabled
+  /admin/v1/auth/dev-login/verify:
+    post:
+      tags: [admin]
+      summary: Verify the admin development code and issue the normal staff session
+      security: []
+      responses:
+        "200":
+          description: Same { me, redirectTo } body as POST /admin/v1/auth/otp/verify.
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
   /v1/auth/otp/request:
     post:
       tags:
@@ -5600,7 +5675,7 @@ paths:
       tags:
         - admin
       operationId: admin_post_adminV1AuthSignIn
-      summary: Check email + password, start the 2FA challenge
+      summary: Check email + password and open the staff session
       description: "Domain: Auth & Session"
       security: []
       x-endpointNumbers:

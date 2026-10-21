@@ -48,7 +48,16 @@ describe('route registry', () => {
     const reg = adminRouteRegistry();
     const numbered = reg.filter((r) => r.n !== null).map((r) => r.n as number).sort((a, b) => a - b);
     expect(numbered).toEqual(Array.from({ length: 127 }, (_, i) => i + 13));
-    expect(reg.filter((r) => r.source === 'auth')).toHaveLength(12);
+    const auth = reg.filter((r) => r.source === 'auth');
+    const authKeys = auth.map((r) => `${r.method} ${r.path}`);
+    expect(authKeys).toEqual(
+      expect.arrayContaining([
+        'GET /auth/dev-login',
+        'POST /auth/dev-login',
+        'POST /auth/dev-login/verify',
+      ]),
+    );
+    expect(auth).toHaveLength(15);
     const keys = reg.map((r) => `${r.method} ${r.path}`);
     expect(new Set(keys).size).toBe(keys.length);
   });

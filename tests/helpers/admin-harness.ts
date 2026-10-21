@@ -6,8 +6,6 @@ import request from 'supertest';
 import { createAdminRouter } from '../../src/app-clients/admin/routes.js';
 import { errorHandler, notFoundHandler } from '../../src/common/middleware/error-handler.js';
 import { requestContext } from '../../src/common/middleware/request-context.js';
-import { getOtpProvider } from '../../src/integrations/otp/otp.provider.js';
-import type { FakeOtpProvider } from '../../src/integrations/otp/otp.provider.js';
 import { Role } from '../../src/modules/auth/auth.models.js';
 import { DEFAULT_ROLES } from '../../src/modules/staff/default-roles.js';
 import { createStaff } from '../../src/modules/staff/staff.service.js';
@@ -80,16 +78,17 @@ function wrap(agent: ReturnType<typeof request.agent>, csrf: string, cookie: str
   };
 }
 
-/** Real two-step sign-in: password → OTP (read from the fake SMS provider) → session cookie + CSRF token. */
+/** Password sign-in issues the staff session cookie and CSRF token. */
 export async function signIn(app: Express, email: string): Promise<Session> {
   const agent = request.agent(app);
   const step1 = await agent.post('/admin/v1/auth/sign-in').send({ email, password: PASSWORD });
-  if (step1.status !== 200) throw new Error(`sign-in failed: ${step1.status} ${JSON.stringify(step1.body)}`);
-  const otp = getOtpProvider() as FakeOtpProvider;
-  const to = otp.sent[otp.sent.length - 1]!.to;
-  const code = otp.lastCodeFor(to)!;
-  const step2 = await agent.post('/admin/v1/auth/otp/verify').send({ challengeId: step1.body.challengeId, code });
-  if (step2.status !== 200) throw new Error(`otp verify failed: ${step2.status} ${JSON.stringify(step2.body)}`);
-  const cookie = ((step2.headers['set-cookie'] as unknown as string[]) ?? []).map((c) => c.split(';')[0]).join('; ');
-  return wrap(agent, String(step2.headers['x-csrf-token']), cookie);
+  if (step1.status !== 200 || !step1.body?.me) {
+    throw new Error(`sign-in failed: ${step1.status} ${JSON.stringify(step1.body)}`);
+  }
+  const setCookie = step1.headers['set-cookie'];
+  const cookie = (Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : [])
+    .map((c) => c.split(';')[0])
+    .join('; ');
+  const csrf = String(step1.headers['x-csrf-token'] ?? step1.body.me.csrfToken ?? '');
+  return wrap(agent, csrf, cookie);
 }

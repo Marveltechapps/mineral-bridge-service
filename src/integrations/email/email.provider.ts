@@ -9,9 +9,13 @@ export interface EmailMessage {
   html?: string;
 }
 
+export interface EmailSendResult {
+  providerMessageId?: string;
+}
+
 export interface EmailProvider {
   readonly name: string;
-  send(message: EmailMessage): Promise<void>;
+  send(message: EmailMessage): Promise<EmailSendResult>;
 }
 
 /** Collects messages in memory. Tests read `outbox`; nothing is ever sent. */
@@ -19,11 +23,16 @@ export class FakeEmailProvider implements EmailProvider {
   readonly name = 'fake';
   readonly outbox: Array<EmailMessage & { sentAt: Date }> = [];
 
-  async send(message: EmailMessage): Promise<void> {
+  async send(message: EmailMessage): Promise<EmailSendResult> {
     this.outbox.push({ ...message, sentAt: new Date() });
     if (loadEnv().NODE_ENV === 'development') {
-      logger.info({ to: message.to, subject: message.subject }, '[fake-email] message captured');
+      const code = message.text.match(/\b(\d{4,8})\b/)?.[1];
+      logger.info(
+        { to: message.to, subject: message.subject },
+        `[fake-email] local development code ${code ?? 'unavailable'}`,
+      );
     }
+    return {};
   }
 
   lastTo(address: string): (EmailMessage & { sentAt: Date }) | undefined {
@@ -62,7 +71,7 @@ export class SmtpEmailProvider implements EmailProvider {
     return new AppError({
       status: 503,
       code: 'email/provider-unavailable',
-      message: 'Email cannot be sent right now. Please try again shortly.',
+      message: "We couldn't send your verification code right now. Please try again or choose another verification method.",
     });
   }
 
@@ -91,18 +100,19 @@ export class SmtpEmailProvider implements EmailProvider {
     return this.transport;
   }
 
-  async send(message: EmailMessage): Promise<void> {
+  async send(message: EmailMessage): Promise<EmailSendResult> {
     const transport = await this.getTransport();
     try {
-      await transport.sendMail({
+      const info = (await transport.sendMail({
         from: this.config.from,
         to: message.to,
         subject: message.subject,
         text: message.text,
         html: message.html,
-      });
+      })) as { messageId?: string };
+      return { providerMessageId: info.messageId };
     } catch (err) {
-      logger.error({ err }, 'SMTP send failed');
+      logger.error({ err: err instanceof Error ? err.name : 'error' }, 'SMTP send failed');
       throw this.unavailable('send failed');
     }
   }
@@ -117,13 +127,13 @@ export class ResendEmailProvider implements EmailProvider {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  async send(message: EmailMessage): Promise<void> {
+  async send(message: EmailMessage): Promise<EmailSendResult> {
     if (!this.apiKey) {
       logger.error('Resend API key is not configured');
       throw new AppError({
         status: 503,
         code: 'email/provider-unavailable',
-        message: 'Email cannot be sent right now. Please try again shortly.',
+        message: "We couldn't send your verification code right now. Please try again or choose another verification method.",
       });
     }
     let res: Response;
@@ -144,22 +154,48 @@ export class ResendEmailProvider implements EmailProvider {
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
-      logger.error({ err }, 'Resend request failed');
+      logger.error({ err: err instanceof Error ? err.name : 'error' }, 'Resend request failed');
       throw new AppError({
         status: 503,
         code: 'email/provider-unavailable',
-        message: 'Email cannot be sent right now. Please try again shortly.',
+        message: "We couldn't send your verification code right now. Please try again or choose another verification method.",
       });
     }
-    if (!res.ok) {
-      logger.error({ status: res.status }, 'Resend rejected the message');
-      throw new AppError({
-        status: 503,
-        code: 'email/provider-unavailable',
-        message: 'Email cannot be sent right now. Please try again shortly.',
-      });
+    const body = await res.text().catch(() => '');
+    if (!res.ok) throw resendRejection(res.status, body);
+    let providerMessageId: string | undefined;
+    try {
+      const json = JSON.parse(body) as { id?: unknown };
+      if (typeof json.id === 'string') providerMessageId = json.id;
+    } catch {
+      /* A 2xx body without an id still means Resend accepted the request. */
     }
+    logger.info({ providerMessageId, delivered: false }, 'Resend accepted the email request');
+    return { providerMessageId };
   }
+}
+
+function resendRejection(status: number, body: string): AppError {
+  let name = '';
+  let detail = '';
+  try {
+    const json = JSON.parse(body) as { name?: unknown; message?: unknown };
+    name = String(json.name ?? '');
+    detail = String(json.message ?? '');
+  } catch {
+    detail = '';
+  }
+  const invalidKey = status === 401 || /api key/i.test(detail);
+  const unverifiedDomain = /domain/i.test(detail) && /verif/i.test(detail);
+  logger.error(
+    { status, providerError: name || 'rejected', invalidKey, unverifiedDomain },
+    'Resend rejected the message',
+  );
+  return new AppError({
+    status: 503,
+    code: 'email/provider-unavailable',
+    message: "We couldn't send your verification code right now. Please try again or choose another verification method.",
+  });
 }
 
 export function createEmailProvider(): EmailProvider {
@@ -180,6 +216,14 @@ export function createEmailProvider(): EmailProvider {
     throw new Error('EMAIL_PROVIDER=fake is not allowed when NODE_ENV=production');
   }
   return new FakeEmailProvider();
+}
+
+/** True when this process can attempt an email code. Fake is limited to non-production. */
+export function isEmailDeliveryConfigured(env = loadEnv()): boolean {
+  if (env.EMAIL_PROVIDER === 'resend') return Boolean(env.RESEND_API_KEY);
+  if (env.EMAIL_PROVIDER === 'smtp') return Boolean(env.SMTP_HOST && env.SMTP_PORT);
+  if (env.EMAIL_PROVIDER === 'fake') return env.NODE_ENV !== 'production';
+  return false;
 }
 
 let current: EmailProvider | null = null;

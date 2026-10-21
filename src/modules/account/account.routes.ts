@@ -196,11 +196,16 @@ export function mobileAccountRouter(): Router {
 export function webAccountRouter(): Router {
   const r = Router();
 
-  r.get('/account/profile', requireUser, ah(async (req, res) => res.json(webProfile(await users.getUserOrThrow(currentUserId(req))))));
-  r.patch('/account/profile', requireUser, validate({ body: profileBody }), ah(async (req, res) => res.json(webProfile(await users.updateProfile(currentUserId(req), req.body)))));
-  r.put('/account/avatar', requireUser, validate({ body: avatarBody }), ah(async (req, res) => res.json(webProfile(await setAvatar(currentUserId(req), req.body.fileId)))));
+  const accountProfile = async (user: UserRecord) => ({
+    ...webProfile(user),
+    hasPassword: await users.hasPassword(user.id),
+  });
+
+  r.get('/account/profile', requireUser, ah(async (req, res) => res.json(await accountProfile(await users.getUserOrThrow(currentUserId(req))))));
+  r.patch('/account/profile', requireUser, validate({ body: profileBody }), ah(async (req, res) => res.json(await accountProfile(await users.updateProfile(currentUserId(req), req.body)))));
+  r.put('/account/avatar', requireUser, validate({ body: avatarBody }), ah(async (req, res) => res.json(await accountProfile(await setAvatar(currentUserId(req), req.body.fileId)))));
   // Contract: POST /account/avatar
-  r.post('/account/avatar', requireUser, validate({ body: avatarBody }), ah(async (req, res) => res.json(webProfile(await setAvatar(currentUserId(req), req.body.fileId)))));
+  r.post('/account/avatar', requireUser, validate({ body: avatarBody }), ah(async (req, res) => res.json(await accountProfile(await setAvatar(currentUserId(req), req.body.fileId)))));
 
   const pid = validate({ params: payoutIdParam });
   r.get('/account/payout-methods', requireUser, ah(async (req, res) => res.json({ items: (await payoutsService.listAccounts(currentUserId(req))).map(toWebPayoutMethod) })));

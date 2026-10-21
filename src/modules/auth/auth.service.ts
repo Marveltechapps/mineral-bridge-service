@@ -1,4 +1,4 @@
-import { unprocessable } from '../../common/errors/app-error.js';
+import { conflict, notFound, unprocessable } from '../../common/errors/app-error.js';
 import { projectCustomerAccount, safeProject } from '../../integration/customer-admin.bridge.js';
 import {
   createCustomerSession,
@@ -12,6 +12,7 @@ import {
 import type { CustomerClient, CustomerSessionRecord, DeviceInfo } from '../sessions/session.types.js';
 import { userRepository } from '../users/user.repository.js';
 import {
+  assertWebRegistrationAvailable,
   findForWebLogin,
   findOrCreateByVerifiedPhone,
   findOrCreateFromWebRegistration,
@@ -20,10 +21,14 @@ import {
   type WebRegistrationPayload,
 } from '../users/user.service.js';
 import type { UserRecord } from '../users/user.types.js';
+import { isEmailDeliveryConfigured } from '../../integrations/email/email.provider.js';
+import { isSmsDeliveryConfigured } from '../../integrations/otp/otp.provider.js';
+import { isDevelopmentOtpEnabled } from './dev-otp.js';
 import { signAccessToken } from './auth.tokens.js';
 import type { OtpChannel } from './otp.model.js';
 import {
   requestChallenge,
+  reserveOtpSendSlot,
   resendChallenge,
   verifyChallenge,
   type ChallengeInfo,
@@ -48,8 +53,14 @@ export async function issueCustomerTokens(
   user: UserRecord,
   client: CustomerClient,
   device: DeviceInfo = {},
+  options?: { persistent?: boolean },
 ): Promise<IssuedTokens> {
-  const { session, refreshToken } = await createCustomerSession({ userId: user.id, client, device });
+  const { session, refreshToken } = await createCustomerSession({
+    userId: user.id,
+    client,
+    device,
+    persistent: options?.persistent,
+  });
   const { token, expiresIn } = signAccessToken({
     sub: user.id,
     sid: session.publicId,
@@ -63,17 +74,36 @@ export async function issueCustomerTokens(
 // Mobile — phone + 6-digit code, no passwords
 // ---------------------------------------------------------------------------------------------
 
+export const ACCOUNT_NOT_FOUND_MESSAGE =
+  'Account not found. Please check your email or mobile number, or create a new account.';
+
+/** Which verification channels this server can actually send. No secrets. */
+export function customerVerificationChannels(): { email: boolean; sms: boolean } {
+  if (isDevelopmentOtpEnabled()) return { email: true, sms: true };
+  return { email: isEmailDeliveryConfigured(), sms: isSmsDeliveryConfigured() };
+}
+
 export async function requestMobileOtp(input: {
   phone: string;
   intent: 'signup' | 'login';
   channel: OtpChannel;
   ip?: string;
 }): Promise<ChallengeInfo> {
+  const existing = await findForWebLogin('mobile', input.phone);
+  if (input.intent === 'login' && !existing) {
+    await reserveOtpSendSlot({ client: 'mobile', destination: input.phone, ip: input.ip });
+    throw notFound('auth/account-not-found', ACCOUNT_NOT_FOUND_MESSAGE);
+  }
+  if (input.intent === 'signup' && existing) {
+    await reserveOtpSendSlot({ client: 'mobile', destination: input.phone, ip: input.ip });
+    throw conflict('auth/duplicate-mobile', 'An account already uses this mobile number. Log in instead.');
+  }
   return requestChallenge({
     client: 'mobile',
     intent: input.intent,
     channel: input.channel,
     destination: input.phone,
+    subject: existing ? { type: 'user', id: existing.id } : undefined,
     ip: input.ip,
   });
 }
@@ -98,7 +128,15 @@ export async function verifyMobileOtp(input: {
     client: 'mobile',
     destination: input.phone,
   });
-  // Phone-only product: an unknown number that proves possession becomes an account (login ≡ signup).
+  if (challenge.intent === 'login') {
+    const existing = await findForWebLogin('mobile', challenge.destination);
+    if (!existing) throw notFound('auth/account-not-found', ACCOUNT_NOT_FOUND_MESSAGE);
+    const user = await markVerified(existing, { phone: true });
+    await safeProject('account', () => projectAccount(user));
+    const tokens = await issueCustomerTokens(user, 'mobile', input.device);
+    return { tokens, user, isNewAccount: false };
+  }
+  // Signup only: an unknown number that proves possession becomes an account.
   const { user, isNew } = await findOrCreateByVerifiedPhone(challenge.destination);
   await safeProject('account', () => projectAccount(user));
   const tokens = await issueCustomerTokens(user, 'mobile', input.device);
@@ -134,15 +172,13 @@ export async function registerWeb(input: {
   ip?: string;
 }): Promise<ChallengeInfo> {
   const { registration } = input;
-  const existing = await findForWebLogin(registration.method, registration.identifier);
+  await assertWebRegistrationAvailable(registration);
   return requestChallenge({
     client: 'web',
     intent: 'signup',
     channel: channelForWebMethod(registration.method),
     destination: registration.identifier,
-    subject: existing ? { type: 'user', id: existing.id } : undefined,
-    // The account is created on successful verification, never before — and if one already
-    // exists it is signed in unchanged, so the response is identical either way.
+    // The account is created on successful verification, never before.
     payload: { registration },
     ip: input.ip,
   });
@@ -155,14 +191,25 @@ export async function requestWebOtp(input: {
   ip?: string;
 }): Promise<ChallengeInfo> {
   const existing = await findForWebLogin(input.method, input.identifier);
+  if (input.intent === 'login' && !existing) {
+    await reserveOtpSendSlot({ client: 'web', destination: input.identifier, ip: input.ip });
+    throw notFound('auth/account-not-found', ACCOUNT_NOT_FOUND_MESSAGE);
+  }
+  if (input.intent === 'signup' && existing) {
+    await reserveOtpSendSlot({ client: 'web', destination: input.identifier, ip: input.ip });
+    throw conflict(
+      input.method === 'email' ? 'auth/duplicate-email' : 'auth/duplicate-mobile',
+      input.method === 'email'
+        ? 'An account already uses this email address. Log in instead.'
+        : 'An account already uses this mobile number. Log in instead.',
+    );
+  }
   return requestChallenge({
     client: 'web',
     intent: input.intent,
     channel: channelForWebMethod(input.method),
     destination: input.identifier,
     subject: existing ? { type: 'user', id: existing.id } : undefined,
-    // Unknown identifier: behave identically (same response, same timing class) but send nothing.
-    decoy: !existing,
     ip: input.ip,
   });
 }
@@ -178,6 +225,8 @@ export async function verifyWebOtp(input: {
   challengeId: string;
   code: string;
   device: DeviceInfo;
+  /** Unchecked "Keep me signed in" issues a browser session cookie. Defaults to persistent. */
+  rememberDevice?: boolean;
 }): Promise<{ tokens: IssuedTokens; user: UserRecord; isNewAccount: boolean }> {
   const challenge = await verifyChallenge({
     challengeId: input.challengeId,
@@ -201,7 +250,9 @@ export async function verifyWebOtp(input: {
   if (!user) throw unprocessable('We could not complete sign-in.', undefined, 'auth/invalid-credentials');
 
   await safeProject('account', () => projectAccount(user));
-  const tokens = await issueCustomerTokens(user, 'web', input.device);
+  const tokens = await issueCustomerTokens(user, 'web', input.device, {
+    persistent: input.rememberDevice !== false,
+  });
   return { tokens, user, isNewAccount: isNew };
 }
 
@@ -280,12 +331,12 @@ export async function changeWebPassword(input: {
   sessionPublicId: string;
   currentPassword?: string;
   newPassword: string;
-}): Promise<{ refreshToken?: string }> {
+}): Promise<{ refreshToken?: string; persistent: boolean }> {
   await setPassword(input.userId, input.newPassword, input.currentPassword);
   await revokeAllCustomerSessions(input.userId, {
     exceptPublicId: input.sessionPublicId,
     reason: 'password_changed',
   });
   const rotated = await forceRotateCustomerSession(input.sessionPublicId);
-  return { refreshToken: rotated?.refreshToken };
+  return { refreshToken: rotated?.refreshToken, persistent: rotated?.session.persistent !== false };
 }
