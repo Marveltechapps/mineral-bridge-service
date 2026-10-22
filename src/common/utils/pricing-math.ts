@@ -1,4 +1,5 @@
 import { percentOfMinor } from './money.js';
+import { gramsInUnit } from './quantity.js';
 
 /**
  * Unit prices are stored as integer "minor units x 10^4 per gram" (E4) so a price such as
@@ -8,11 +9,16 @@ import { percentOfMinor } from './money.js';
 export const E4 = 10_000n;
 
 export function totalMinor(grams: number, unitPriceMinorE4PerGram: number): number {
-  const num = BigInt(Math.round(grams)) * BigInt(Math.round(unitPriceMinorE4PerGram));
-  const q = (num + E4 / 2n) / E4;
-  const out = Number(q);
+  const out = Math.round((grams * unitPriceMinorE4PerGram) / Number(E4));
   if (!Number.isSafeInteger(out)) throw new Error('Computed total exceeds safe integer range');
   return out;
+}
+
+/** Sheet price is major currency units per quoted unit. Storage is minor-units × 10^4 per gram. */
+export function quotedPriceToE4PerGram(priceMajor: number, unit: string): number {
+  const grams = gramsInUnit(unit);
+  if (!grams || priceMajor < 0 || !Number.isFinite(priceMajor)) return 0;
+  return Math.round((priceMajor * 100 * 10_000) / grams);
 }
 
 export function unitPriceMinorPerGram(unitPriceMinorE4PerGram: number): number {

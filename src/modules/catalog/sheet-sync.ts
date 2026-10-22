@@ -1,4 +1,5 @@
 import { logger } from '../../config/logger.js';
+import { quotedPriceToE4PerGram } from '../../common/utils/pricing-math.js';
 import { CategoryModel, MineralTypeModel, ProductFormModel, ProductModel, SubcategoryModel } from '../../models/catalog.model.js';
 import { Mineral, MineralCategory } from '../reference/reference.model.js';
 import { hierarchyErrors, imageMatchesSource, imageNameFromUrl } from './hierarchy.js';
@@ -163,19 +164,9 @@ function cell(row: string[], index: Record<string, number>, key: string): string
   return (row[at] ?? '').trim();
 }
 
-function gramsPerQuotedUnit(unit: string): number {
-  const u = unit.trim().toLowerCase();
-  if (u === 'mt' || u === 't' || u === 'tonne' || u === 'ton') return 1_000_000;
-  if (u === 'kg') return 1_000;
-  if (u === 'g') return 1;
-  return 0;
-}
-
 /** Sheet price is major currency units per quoted unit. Storage is minor-units × 10^4 per gram. */
 export function sheetPriceToE4PerGram(price: number, unit: string): number {
-  const grams = gramsPerQuotedUnit(unit);
-  if (!grams || price < 0) return 0;
-  return Math.round((price * 100 * 10_000) / grams);
+  return quotedPriceToE4PerGram(price, unit);
 }
 
 function parsePrice(raw: string): number | null {

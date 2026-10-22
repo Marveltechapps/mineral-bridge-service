@@ -42,6 +42,14 @@ const orderSchema = new Schema<any>(
     escrowRef: String,
     origin: String,
     destination: String,
+    /** How the customer chose to settle: Escrow, Wire transfer, Letter of credit, Bitcoin, or a payout preference. */
+    settlementMethod: String,
+    /** Customer sell listings: raw, semi-finished, or finished. */
+    mineralForm: String,
+    /** Customer-app status, kept beside the desk stage. */
+    customerStatus: String,
+    /** Sell-listing verification state shown to the desk. */
+    verificationStatus: String,
     note: String,
     stageLog: [
       {

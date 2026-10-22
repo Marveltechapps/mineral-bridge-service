@@ -13,6 +13,22 @@ export const GRAMS_PER_UNIT = {
 export type QuantityUnit = keyof typeof GRAMS_PER_UNIT;
 export type MobileUnit = 'g' | 'kg' | 't';
 
+/** The unit a catalog price is quoted in. Unknown text returns null so it is not treated as grams. */
+export function commercialUnit(raw: unknown): QuantityUnit | null {
+  const unit = String(raw ?? '').trim().toLowerCase();
+  if (unit === 'ct' || unit === 'carat' || unit === 'carats') return 'ct';
+  if (unit === 'g' || unit === 'gram' || unit === 'grams') return 'g';
+  if (unit === 'kg' || unit === 'kilogram' || unit === 'kilograms') return 'kg';
+  if (unit === 'oz' || unit === 'ounce' || unit === 'ounces' || unit === 'ozt' || unit === 'troy oz' || unit === 'troy ounce') return 'oz';
+  if (unit === 'mt' || unit === 't' || unit === 'tonne' || unit === 'tonnes' || unit === 'ton') return 'MT';
+  return null;
+}
+
+export function gramsInUnit(unit: string): number {
+  const parsed = commercialUnit(unit);
+  return parsed ? GRAMS_PER_UNIT[parsed] : 0;
+}
+
 export function toGrams(value: number, unit: QuantityUnit): number {
   if (!Number.isFinite(value) || value <= 0) {
     throw new AppError({
@@ -22,7 +38,16 @@ export function toGrams(value: number, unit: QuantityUnit): number {
       fields: { quantity: 'Must be greater than zero' },
     });
   }
-  return Math.round(value * GRAMS_PER_UNIT[unit]);
+  const grams = Math.round(value * GRAMS_PER_UNIT[unit] * 1_000_000) / 1_000_000;
+  if (grams <= 0) {
+    throw new AppError({
+      status: 422,
+      code: 'validation/failed',
+      message: 'Quantity must be positive',
+      fields: { quantity: 'Must be greater than zero' },
+    });
+  }
+  return grams;
 }
 
 export function fromGrams(grams: number, unit: QuantityUnit): number {

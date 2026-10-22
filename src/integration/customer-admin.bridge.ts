@@ -7,6 +7,10 @@ import { loadEnv } from '../config/env.js';
 import { FileModel } from '../models/file.model.js';
 import { OrderModel } from '../models/order.model.js';
 import type { IOrder } from '../models/order.model.js';
+import { UserModel } from '../models/user.model.js';
+import { ListingModel } from '../models/web-trade.model.js';
+import type { IListing, ListingStatus } from '../models/web-trade.model.js';
+import { unitPriceMinorPerGram } from '../common/utils/pricing-math.js';
 import { KycDocument, KycSubmission, User } from '../models/people.models.js';
 import { FileObject } from '../models/platform.models.js';
 import { Order } from '../models/trading.models.js';
@@ -332,32 +336,244 @@ function quantityFromGrams(grams: number): { value: number; unit: 'g' | 'kg' | '
   return { value: grams, unit: 'g' };
 }
 
+const SETTLEMENT_LABEL: Record<string, string> = {
+  escrow: 'Escrow',
+  wire: 'Wire transfer',
+  lc: 'Letter of credit',
+  btc: 'Bitcoin',
+};
+
+const FORM_LABEL: Record<string, string> = {
+  raw: 'Raw',
+  semi_finished: 'Semi-finished',
+  finished: 'Finished',
+};
+
+const LISTING_STATUS_FOR_STAGE: Record<string, ListingStatus> = {
+  verification: 'submitted',
+  pricing_confirmation: 'submitted',
+  agent_visit: 'visit_scheduled',
+  inspection_approval: 'verified',
+  payment_released: 'paid',
+  custody_transfer: 'received',
+};
+
+const VERIFICATION_LABEL: Record<ListingStatus, string> = {
+  draft: 'Draft',
+  submitted: 'Submitted',
+  visit_scheduled: 'Visit scheduled',
+  verified: 'Verified',
+  in_transit: 'In transit',
+  received: 'Received',
+  paid: 'Paid',
+  rejected: 'Rejected',
+};
+
+function adminOrderStatus(status: string): 'active' | 'completed' | 'cancelled' {
+  if (status === 'cancelled' || status === 'rejected') return 'cancelled';
+  if (status === 'completed' || status === 'paid') return 'completed';
+  return 'active';
+}
+
+function moneyFrom(doc?: { amountMinor?: number; currency?: string } | null) {
+  if (!doc || typeof doc.amountMinor !== 'number') return undefined;
+  return { amountMinor: doc.amountMinor, currency: doc.currency || 'USD', scale: 2 };
+}
+
+function listingLocation(address: IListing['verificationAddress']): string {
+  const country = address.countryName || address.country;
+  return [address.streetAddress, address.city, address.region, country].filter(Boolean).join(', ');
+}
+
+function stageForListing(status: ListingStatus): OrderStage {
+  if (status === 'visit_scheduled') return 'agent_visit';
+  if (status === 'verified' || status === 'in_transit') return 'inspection_approval';
+  if (status === 'paid') return 'payment_released';
+  if (status === 'received') return 'custody_transfer';
+  return 'verification';
+}
+
+async function projectAccountForUser(userId: string): Promise<void> {
+  const user = await UserModel.findById(userId).lean();
+  if (!user) return;
+  await projectCustomerAccount({
+    id: userId,
+    name: user.profile?.fullName || user.profile?.displayName || 'Customer',
+    email: user.email,
+    phone: user.phone,
+    org: user.profile?.companyName,
+    country: user.profile?.countryCode,
+    tier: user.tier,
+    kycStatus: user.kycStatus,
+  });
+}
+
 export async function projectCustomerOrder(order: IOrder): Promise<void> {
   const line = order.lines[0];
   const qty = quantityFromGrams(order.totalGrams);
+  const stage = ORDER_STAGES[order.stageIndex] ?? 'verification';
+  const rateMinor = line?.unitPriceMinorE4PerGram ? unitPriceMinorPerGram(line.unitPriceMinorE4PerGram) : undefined;
+  const settlement = SETTLEMENT_LABEL[order.settlement?.method || order.paymentMethod] ?? order.paymentMethod;
+  const commercial: Record<string, unknown> = {
+    side: order.side,
+    mineral: { ...(line?.productId ? { id: line.productId } : {}), name: line?.name ?? 'Mineral' },
+    counterpartyId: order.userId,
+    quantity: qty,
+    value: { amountMinor: order.total.amountMinor, currency: order.total.currency || 'USD', scale: 2 },
+    openedAt: order.createdAt ?? new Date(),
+    origin: [order.delivery?.city, order.delivery?.region, order.region].filter(Boolean).join(', '),
+    destination: order.delivery?.facilityName || order.delivery?.streetAddress || '',
+    settlementMethod: settlement,
+    customerStatus: order.status,
+    note: `Customer order ${order._id}`,
+  };
+  if (rateMinor) {
+    commercial.lockedRate = { amountMinor: rateMinor, currency: order.total.currency || 'USD', scale: 2, per: 'g' };
+  }
+  const existing = await Order.findOne({ orderId: order.reference }).select('_id').lean();
+  if (existing) {
+    await Order.updateOne(
+      { orderId: order.reference },
+      { $set: { ...commercial, status: adminOrderStatus(order.status) } },
+    );
+    return;
+  }
   await Order.updateOne(
     { orderId: order.reference },
     {
-      $set: {
-        side: order.side,
-        status: order.status === 'cancelled' ? 'cancelled' : order.status === 'completed' ? 'completed' : 'active',
-        mineral: { name: line?.name ?? 'Mineral' },
-        counterpartyId: order.userId,
-        quantity: qty,
-        stage: 'verification',
-        value: { amountMinor: order.total.amountMinor, currency: order.total.currency, scale: 2 },
-        openedAt: order.createdAt ?? new Date(),
-        origin: order.region,
-        note: `Customer order ${order._id}`,
-      },
+      $set: commercial,
       $setOnInsert: {
+        status: adminOrderStatus(order.status),
+        stage,
         stageEnteredAt: new Date(),
-        stageLog: [{ stage: 'verification', at: new Date(), description: 'Received from the customer app' }],
-        paymentStatus: 'due_on_approval',
+        stageLog: [{ stage, at: new Date(), description: 'Received from the customer app' }],
+        paymentStatus: order.settlement?.status === 'released' ? 'released' : 'due_on_approval',
       },
     },
     { upsert: true },
   );
+}
+
+async function listingPhotoDocuments(listing: IListing) {
+  const documents = [];
+  for (const [index, photo] of listing.photos.entries()) {
+    try {
+      await mirrorCustomerFileForReview({
+        fileId: photo.fileId,
+        userId: listing.userId,
+        kycId: listing.reference,
+        name: `Listing photo ${index + 1}`,
+      });
+    } catch (err) {
+      logger.error({ err, fileId: photo.fileId }, 'listing photo was not mirrored for review');
+    }
+    documents.push({
+      id: photo._id,
+      name: `Photo ${index + 1}`,
+      ref: photo.fileId,
+      status: 'in_review',
+      fileId: photo.fileId,
+    });
+  }
+  return documents;
+}
+
+/** A submitted customer sell listing becomes a sell-side order the desk can verify. */
+export async function projectCustomerListing(listing: IListing): Promise<void> {
+  if (listing.status === 'draft') return;
+  try {
+    await projectAccountForUser(listing.userId);
+  } catch (err) {
+    logger.error({ err, userId: listing.userId }, 'seller account was not projected');
+  }
+  const qty = quantityFromGrams(listing.grams);
+  const value = moneyFrom(listing.indicativeNet ?? listing.quoteSnapshot?.net);
+  const gross = moneyFrom(listing.quoteSnapshot?.gross);
+  const documents = await listingPhotoDocuments(listing);
+  const stage = stageForListing(listing.status);
+  const commercial: Record<string, unknown> = {
+    side: 'sell',
+    mineral: { ...(listing.mineralId ? { id: listing.mineralId } : {}), name: listing.mineralName },
+    counterpartyId: listing.userId,
+    quantity: qty,
+    openedAt: listing.submittedAt ?? listing.createdAt ?? new Date(),
+    origin: listingLocation(listing.verificationAddress),
+    settlementMethod: listing.payoutPreference || 'Seller payout',
+    mineralForm: FORM_LABEL[listing.form] ?? listing.form,
+    customerStatus: listing.status,
+    verificationStatus: VERIFICATION_LABEL[listing.status] ?? listing.status,
+    listingId: listing._id,
+    note: `Customer sell listing ${listing.reference}`,
+  };
+  if (value) commercial.value = value;
+  if (gross && listing.grams > 0) {
+    commercial.lockedRate = {
+      amountMinor: Math.round(gross.amountMinor / listing.grams),
+      currency: gross.currency,
+      scale: 2,
+      per: 'g',
+    };
+  }
+  const existing = await Order.findOne({ orderId: listing.reference }).select('documents').lean();
+  if (existing) {
+    await Order.updateOne(
+      { orderId: listing.reference },
+      {
+        $set: {
+          ...commercial,
+          status: adminOrderStatus(listing.status),
+          ...((existing.documents ?? []).length === 0 && documents.length ? { documents } : {}),
+        },
+      },
+    );
+    return;
+  }
+  await Order.updateOne(
+    { orderId: listing.reference },
+    {
+      $set: commercial,
+      $setOnInsert: {
+        status: adminOrderStatus(listing.status),
+        stage,
+        stageEnteredAt: new Date(),
+        stageLog: [{ stage, at: listing.submittedAt ?? new Date(), description: 'Sell listing submitted from the customer app' }],
+        paymentStatus: 'due_on_approval',
+        documents,
+      },
+    },
+    { upsert: true },
+  );
+}
+
+let tradeSync: Promise<void> | null = null;
+let tradeSyncedAt = 0;
+
+/** Copies customer buy orders and submitted sell listings that the desk does not have yet. */
+export function syncCustomerTradeToAdmin(): Promise<void> {
+  if (Date.now() - tradeSyncedAt < 15_000) return Promise.resolve();
+  if (!tradeSync) {
+    tradeSync = (async () => {
+      try {
+        const orders = await OrderModel.find().sort({ createdAt: -1 }).limit(200).lean<IOrder[]>();
+        for (const order of orders) {
+          await safeProject(`order ${order.reference}`, async () => {
+            await projectAccountForUser(order.userId);
+            await projectCustomerOrder(order);
+          });
+        }
+        const listings = await ListingModel.find({ status: { $ne: 'draft' } }).sort({ createdAt: -1 }).limit(200).lean<IListing[]>();
+        for (const listing of listings) {
+          await safeProject(`listing ${listing.reference}`, () => projectCustomerListing(listing));
+        }
+        tradeSyncedAt = Date.now();
+      } catch (err) {
+        logger.error({ err }, 'customer trade sync failed');
+      }
+    })().finally(() => {
+      tradeSync = null;
+    });
+  }
+  return tradeSync;
 }
 
 const CUSTOMER_STATUS_FOR_STAGE: Record<number, IOrder['status']> = {
@@ -380,6 +596,17 @@ export async function reflectAdminOrderStage(orderReference: string, stage: stri
       $set: { stageIndex: idx, status },
       $push: { stageHistory: { index: idx, key: stage, at: new Date(), note: 'Updated from the operations console' } },
     },
+  );
+  await Order.updateOne({ orderId: orderReference }, { $set: { customerStatus: status } });
+  const listing = await ListingModel.findOne({ reference: orderReference }).lean<IListing>();
+  if (!listing) return;
+  let next = LISTING_STATUS_FOR_STAGE[stage];
+  if (!next) return;
+  if (stage === 'custody_transfer' && listing.status === 'paid') next = 'paid';
+  await ListingModel.updateOne({ reference: orderReference }, { $set: { status: next } });
+  await Order.updateOne(
+    { orderId: orderReference },
+    { $set: { customerStatus: next, verificationStatus: VERIFICATION_LABEL[next] } },
   );
 }
 

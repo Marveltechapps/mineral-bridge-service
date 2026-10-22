@@ -3,12 +3,14 @@ import request from 'supertest';
 import { FileModel } from '../src/models/file.model.js';
 import { KycDocument } from '../src/models/people.models.js';
 import { FileObject } from '../src/models/platform.models.js';
+import { OrderModel } from '../src/models/order.model.js';
+import { ListingModel } from '../src/models/web-trade.model.js';
 import { Order } from '../src/models/trading.models.js';
 import { User } from '../src/models/people.models.js';
-import { applyAdminKycToCustomer } from '../src/integration/customer-admin.bridge.js';
+import { applyAdminKycToCustomer, projectCustomerOrder, reflectAdminOrderStage } from '../src/integration/customer-admin.bridge.js';
 import { toWebKycRecord } from '../src/modules/kyc/kyc.mappers.js';
 import { addDocument, getKycView, setDraftIdType, submitWeb } from '../src/modules/kyc/kyc.service.js';
-import { buildApp, clearDb, createUser, MOBILE, seedProduct, startDb, stopDb } from './helpers/harness.js';
+import { buildApp, clearDb, createUser, MOBILE, seedProduct, startDb, stopDb, WEB } from './helpers/harness.js';
 
 vi.mock('../src/modules/auth/auth.middleware.js', async () => await import('./helpers/fake-auth.js'));
 
@@ -50,6 +52,73 @@ describe('customer order is visible to the admin collection', () => {
     expect(adminOrders).toHaveLength(1);
     expect(adminOrders[0]?.mineral.name).toBe('Gold dore bar');
     expect(adminOrders[0]?.stage).toBe('verification');
+    expect(adminOrders[0]?.status).toBe('active');
+    expect(adminOrders[0]?.customerStatus).toBe('pending_review');
+    expect(adminOrders[0]?.settlementMethod).toBe('Escrow');
+    expect(adminOrders[0]?.lockedRate).toMatchObject({ amountMinor: 650, per: 'g', scale: 2 });
+    expect(adminOrders[0]?.value?.amountMinor).toBeGreaterThan(0);
+
+    await Order.updateOne({ orderId: adminOrders[0]?.orderId }, { $set: { stage: 'agent_visit' } });
+    const customer = await OrderModel.findOne({ reference: adminOrders[0]?.orderId }).lean();
+    await projectCustomerOrder(customer!);
+    const kept = await Order.findOne({ orderId: adminOrders[0]?.orderId }).lean();
+    expect(kept?.stage).toBe('agent_visit');
+    expect(kept?.settlementMethod).toBe('Escrow');
+  });
+});
+
+describe('customer sell listing is visible to the operations desk', () => {
+  it('projects the seller, mineral, quantity, form, location, and photos', async () => {
+    const userId = await createUser({ email: 'seller@example.com', profile: { fullName: 'Dhanasekar', countryCode: 'IN' } });
+    await FileModel.create({
+      _id: 'fil_sellphoto01',
+      ownerId: userId,
+      purpose: 'listing-photo',
+      filename: 'ore.jpg',
+      contentType: 'image/jpeg',
+      bytes: 2048,
+      storageKey: `cust/${userId}/fil_sellphoto01/ore.jpg`,
+    });
+    const res = await request(app)
+      .post('/v1/listings')
+      .set(WEB)
+      .set('x-test-user', userId)
+      .set('Idempotency-Key', 'bridge-listing-1')
+      .send({
+        customMineralName: 'Gold',
+        quantity: { value: 500, unit: 'g' },
+        form: 'raw',
+        verificationAddress: { city: 'chennai', country: 'IN', countryName: 'India' },
+        payoutPreference: 'Bank transfer',
+        photoFileIds: ['fil_sellphoto01'],
+        submit: true,
+      });
+    expect(res.status).toBe(201);
+    const listing = await ListingModel.findOne({ userId }).lean();
+    const adminOrder = await Order.findOne({ orderId: listing?.reference }).lean();
+    expect(adminOrder).toMatchObject({
+      side: 'sell',
+      status: 'active',
+      customerStatus: 'submitted',
+      verificationStatus: 'Submitted',
+      mineralForm: 'Raw',
+      settlementMethod: 'Bank transfer',
+      origin: 'chennai, India',
+      stage: 'verification',
+    });
+    expect(adminOrder?.mineral.name).toBe('Gold');
+    expect(adminOrder?.quantity).toMatchObject({ value: 500, unit: 'g' });
+    expect(adminOrder?.documents).toEqual([
+      expect.objectContaining({ name: 'Photo 1', fileId: 'fil_sellphoto01' }),
+    ]);
+    expect(await FileObject.countDocuments({ fileId: 'fil_sellphoto01' })).toBe(1);
+    const seller = await User.findOne({ userId }).lean();
+    expect(seller?.name).toBe('Dhanasekar');
+
+    await reflectAdminOrderStage(listing!.reference, 'agent_visit');
+    expect((await ListingModel.findById(listing?._id).lean())?.status).toBe('visit_scheduled');
+    expect((await Order.findOne({ orderId: listing?.reference }).lean())?.verificationStatus).toBe('Visit scheduled');
+    expect((await Order.findOne({ orderId: listing?.reference }).lean())?.stage).toBe('verification');
   });
 });
 

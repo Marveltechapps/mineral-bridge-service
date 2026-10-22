@@ -3,7 +3,8 @@ import type { ApiClient } from '../../common/middleware/request-context.js';
 import { runIdempotent, idempotencyScope } from '../../common/idempotency/idempotency.js';
 import { addMs, DAY_MS, MINUTE_MS, now } from '../../common/utils/clock.js';
 import { opaqueId } from '../../common/utils/ids.js';
-import { feeMinor, FEES, totalMinor } from '../../common/utils/pricing-math.js';
+import { feeMinor, FEES, quotedPriceToE4PerGram, totalMinor } from '../../common/utils/pricing-math.js';
+import { commercialUnit, fromGrams, gramsInUnit, type QuantityUnit } from '../../common/utils/quantity.js';
 import { references } from '../../common/utils/references.js';
 import { channels, realtimeHub } from '../../realtime/auction-hub.js';
 import type { IOrder, IOrderLine, OrderStatus, PaymentMethod } from '../../models/order.model.js';
@@ -58,14 +59,33 @@ function buildTotals(lines: IOrderLine[], currency: string, feeBps: number, meth
   };
 }
 
+function sellingUnit(p: IProduct): QuantityUnit {
+  return commercialUnit(p.attributes?.unit) ?? 'g';
+}
+
+function quantityLabel(grams: number, unit: QuantityUnit): string {
+  return `${fromGrams(grams, unit)} ${unit}`;
+}
+
+/** The price the customer sees (`listPrice` per selling unit), otherwise the stored per-gram rate. */
+function unitPriceE4(p: IProduct): number {
+  const list = p.attributes?.listPrice;
+  const unit = p.attributes?.unit;
+  if (typeof list === 'number' && list > 0 && typeof unit === 'string' && gramsInUnit(unit) > 0) {
+    return quotedPriceToE4PerGram(list, unit);
+  }
+  return p.unitPriceMinorE4PerGram;
+}
+
 function lineFor(p: IProduct, grams: number): IOrderLine {
+  const unitPriceMinorE4PerGram = unitPriceE4(p);
   return {
     productId: p._id,
     name: p.name,
     imageUrl: p.imageUrl,
     grams,
-    unitPriceMinorE4PerGram: p.unitPriceMinorE4PerGram,
-    lineTotalMinor: totalMinor(grams, p.unitPriceMinorE4PerGram),
+    unitPriceMinorE4PerGram,
+    lineTotalMinor: totalMinor(grams, unitPriceMinorE4PerGram),
   };
 }
 
@@ -75,19 +95,23 @@ function unavailable(client: ApiClient): AppError {
     : conflict('lot/unavailable', 'This lot is no longer available.');
 }
 
-function insufficient(client: ApiClient, availableGrams: number): AppError {
+function insufficient(client: ApiClient, availableGrams: number, unit: QuantityUnit): AppError {
+  const label = quantityLabel(availableGrams, unit);
   return client === 'mobile'
-    ? unprocessable('Requested more than is available', { quantity: String(availableGrams) }, 'catalog/insufficient-quantity')
-    : conflict('lot/insufficient-stock', 'Not enough stock to fill this order.', { current: { availableGrams } });
+    ? unprocessable('Requested more than is available', { quantity: label }, 'catalog/insufficient-quantity')
+    : conflict('lot/insufficient-stock', `Not enough quantity is available. ${label} can be ordered.`, { current: { availableGrams } });
 }
 
 async function loadSellableProduct(productId: string, grams: number, client: ApiClient): Promise<IProduct> {
   const p = await repo.findProduct(productId);
   if (!p || p.status !== 'active') throw unavailable(client);
+  const unit = sellingUnit(p);
   if (grams < p.minOrderGrams) {
-    throw unprocessable('Quantity below minimum order', { quantity: `Minimum ${p.minOrderGrams} g` });
+    const label = quantityLabel(p.minOrderGrams, unit);
+    throw unprocessable(`Minimum order is ${label}`, { quantity: `Minimum ${label}` }, 'order/below-minimum');
   }
-  if (grams > p.availableGrams) throw insufficient(client, p.availableGrams);
+  // A catalog row inserted without an availability figure stays at 0 g. That is not a sold-out lot.
+  if (p.availableGrams > 0 && grams > p.availableGrams) throw insufficient(client, p.availableGrams, unit);
   return p;
 }
 
@@ -178,7 +202,16 @@ export const ordersService = {
       ...t,
       expiresAt: addMs(now(), QUOTE_TTL_MS),
     });
-    return { quote: q, availableGrams: p.availableGrams, withinAvailable: input.grams <= p.availableGrams, feeBps: FEES.webBuyPlatformBps };
+    const tracked = p.availableGrams > 0;
+    return {
+      quote: q,
+      availableGrams: p.availableGrams,
+      withinAvailable: !tracked || input.grams <= p.availableGrams,
+      minOrderGrams: p.minOrderGrams,
+      unit: sellingUnit(p),
+      meetsMinimum: input.grams >= p.minOrderGrams,
+      feeBps: FEES.webBuyPlatformBps,
+    };
   },
 
   /**
@@ -247,6 +280,8 @@ export const ordersService = {
     try {
       for (const l of lines) {
         if (!l.productId) continue;
+        const stocked = await repo.findProduct(l.productId);
+        if (stocked && stocked.availableGrams === 0) continue;
         const ok = await repo.reserveStock(l.productId, l.grams);
         if (!ok) {
           const p = await repo.findProduct(l.productId);

@@ -13,6 +13,7 @@ import { contentService } from '../content/content.service.js';
 import { notifyUser } from '../notifications/notifications.service.js';
 import { payoutsService } from '../payouts/payouts.service.js';
 import { uploadsService } from '../uploads/uploads.service.js';
+import { projectCustomerListing, safeProject } from '../../integration/customer-admin.bridge.js';
 
 export const listingMachine = new StateMachine<ListingStatus>(
   'listing',
@@ -121,6 +122,7 @@ export const listingsService = {
       submittedAt: submit ? now() : undefined,
       version: 0,
     });
+    if (submit) await safeProject('listing', () => projectCustomerListing(doc.toObject() as IListing));
     return doc._id as string;
   },
 
@@ -173,6 +175,7 @@ export const listingsService = {
     }
     const updated = await ListingModel.findOneAndUpdate({ _id: id, userId, version: l.version, status: 'draft' }, { $set: set, $inc: { version: 1 } }, { new: true }).lean<IListing>();
     if (!updated) throw conflict('listing/version-conflict', 'The listing changed. Refresh and try again.');
+    if (updated.status === 'submitted') await safeProject('listing', () => projectCustomerListing(updated));
     return updated;
   },
 

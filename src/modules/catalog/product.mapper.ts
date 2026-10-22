@@ -1,7 +1,7 @@
 import type { IProduct } from '../../models/catalog.model.js';
 import { mobileMoney, webMoney } from '../../common/utils/currency.js';
 import { unitPriceMinorPerGram } from '../../common/utils/pricing-math.js';
-import { mobileQuantity, webQuantity } from '../../common/utils/quantity.js';
+import { commercialUnit, mobileQuantity, webQuantity } from '../../common/utils/quantity.js';
 import { iso } from '../../common/utils/time-display.js';
 import { repairCatalogImageUrl } from './hierarchy.js';
 
@@ -55,7 +55,18 @@ export function toMobileMedia(p: IProduct) {
   };
 }
 
+function sellingUnit(p: IProduct) {
+  return commercialUnit(p.attributes?.unit) ?? 'g';
+}
+
+function listedUnitPrice(p: IProduct) {
+  const list = p.attributes?.listPrice;
+  if (typeof list === 'number' && list > 0) return webMoney({ amountMinor: Math.round(list * 100), currency: p.currency });
+  return webMoney(perGram(p));
+}
+
 export function toWebLot(p: IProduct) {
+  const unit = sellingUnit(p);
   return {
     id: p._id,
     reference: p.reference,
@@ -68,9 +79,9 @@ export function toWebLot(p: IProduct) {
     verified: p.verified,
     assured: p.assured,
     status: p.status,
-    available: webQuantity(p.availableGrams),
-    minOrder: webQuantity(p.minOrderGrams),
-    unitPrice: { per: 'g', price: webMoney(perGram(p)) },
+    available: webQuantity(p.availableGrams, unit),
+    minOrder: webQuantity(p.minOrderGrams, unit),
+    unitPrice: { per: unit, price: listedUnitPrice(p) },
     passportId: p.passportId ?? null,
     imageUrl: repairCatalogImageUrl(p.imageUrl),
     listPrice: typeof p.attributes?.listPrice === 'number' ? p.attributes.listPrice : null,

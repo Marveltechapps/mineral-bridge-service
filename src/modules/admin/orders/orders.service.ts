@@ -69,7 +69,15 @@ export async function mapOrderSummaries(docs: any[]) { // eslint-disable-line @t
     daysInStage: daysInStage(o),
     agent: staffFrom(staff, o.agentId),
     openedAt: iso(o.openedAt),
-    ...(o.status === 'draft' ? { status: 'draft' } : {}),
+    status: o.status,
+    customerStatus: o.customerStatus || o.status,
+    value: outMoney(o.value),
+    lockedRate: outUnitPrice(o.lockedRate),
+    settlementMethod: o.settlementMethod || '',
+    mineralForm: o.mineralForm || '',
+    location: o.origin || '',
+    verificationStatus: o.verificationStatus || '',
+    photoCount: (o.documents ?? []).filter((d: { fileId?: string }) => d.fileId).length,
   }));
 }
 
@@ -127,6 +135,10 @@ export async function mapOrderDetail(o: any) { // eslint-disable-line @typescrip
       ...(o.escrowRef ? { escrowRef: o.escrowRef } : {}),
       origin: o.origin ?? '',
       destination: o.destination ?? '',
+      settlementMethod: o.settlementMethod || '',
+      mineralForm: o.mineralForm || '',
+      verificationStatus: o.verificationStatus || '',
+      customerStatus: o.customerStatus || o.status || '',
     },
     documents: (o.documents ?? []).map((d: { id: string; name: string; ref: string; status: string; fileId?: string }) => ({ id: d.id, name: d.name, ref: d.ref, status: d.status, ...(d.fileId ? { fileId: d.fileId } : {}) })),
     history: [...(o.history ?? [])]
@@ -135,10 +147,13 @@ export async function mapOrderDetail(o: any) { // eslint-disable-line @typescrip
     counterparty: {
       party: partyFrom(users, o.counterpartyId),
       contactName: cp?.contactName ?? cp?.name ?? '',
+      email: cp?.email ?? '',
       phone: cp?.phone ?? '',
       completedOrders: completed,
       disputes,
-      kycStatus: KYC_FROM_STATUS[cp?.status ?? 'in_review'] ?? 'in_review',
+      kycStatus: cp && ['none', 'pending', 'verified', 'rejected'].includes(cp.kycStatus)
+        ? cp.kycStatus
+        : (KYC_FROM_STATUS[cp?.status ?? 'in_review'] ?? 'in_review'),
     },
     exceptions: (o.exceptions ?? []).map((e: { id: string; type: string; severity: string; openedAt: Date; status: string; description?: string }) => ({
       id: e.id,

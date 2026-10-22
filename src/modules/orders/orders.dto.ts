@@ -292,15 +292,17 @@ export function toWebDownload(o: IOrder, docId: string) {
   return { url: signed.url, expiresAt: signed.expiresAt.toISOString(), name: `${d.name}.pdf`, sizeBytes: d.bytes ?? 0 };
 }
 
-export function toWebQuote(q: IQuote, extra: { availableGrams: number; withinAvailable: boolean; feeBps: number }) {
+export function toWebQuote(q: IQuote, extra: { availableGrams: number; withinAvailable: boolean; minOrderGrams: number; meetsMinimum: boolean; feeBps: number; unit?: 'g' | 'kg' | 't' | 'MT' | 'oz' | 'ct' }) {
   return {
     subtotal: webMoney(q.subtotal),
     platformFee: webMoney(q.platformFee),
     platformFeeRate: extra.feeBps / 10_000,
     paymentSurcharge: q.surcharge.amountMinor > 0 ? webMoney(q.surcharge) : null,
     total: webMoney(q.total),
-    availableQuantity: webQuantity(extra.availableGrams),
+    availableQuantity: webQuantity(extra.availableGrams, extra.unit),
     withinAvailable: extra.withinAvailable,
+    minOrder: webQuantity(extra.minOrderGrams, extra.unit),
+    meetsMinimum: extra.meetsMinimum,
     quoteId: q._id,
     expiresAt: q.expiresAt.toISOString(),
   };

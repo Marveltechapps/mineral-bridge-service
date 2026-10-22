@@ -33,7 +33,7 @@ import { notifyStaff } from '../shared/notify.js';
 import { loadFileRefs } from '../shared/files.js';
 import { loadStaffMap, loadUserMap, partyFrom, requireUser } from '../shared/refs.js';
 import { route, type AdminRouteDef } from '../shared/route-kit.js';
-import { reflectAdminOrderStage } from '../../../integration/customer-admin.bridge.js';
+import { reflectAdminOrderStage, syncCustomerTradeToAdmin } from '../../../integration/customer-admin.bridge.js';
 import { ORDER_SORT, buildOrderFilter, mapOrderDetail, mapOrderSummaries, requireOrder, stageIndex } from './orders.service.js';
 
 function staleStage(o: Record<string, any>, expected?: string) // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -81,6 +81,7 @@ const createOrderBody = z.object({
 
 export const orderRoutes: AdminRouteDef[] = [
   route(23, 'GET /orders', ['orders', 'view'], async (req, res) => {
+    await syncCustomerTradeToAdmin().catch(() => undefined);
     const { filter, noStage } = await buildOrderFilter(req.query);
     const sort = sortSpec(req, ORDER_SORT, { openedAt: -1, _id: 1 });
     // "days in stage" desc ⇒ oldest stageEnteredAt first

@@ -53,6 +53,9 @@ MIN0001,Lithium,Lithium Spodumene Ore,Critical Mineral,Battery metal,https://cdn
       imageUrl: 'https://cdn.example/min0001.png',
     });
     expect(sheetPriceToE4PerGram(1289, 'MT')).toBe(1289);
+    expect(sheetPriceToE4PerGram(74, 'g')).toBe(74_000_000);
+    expect(sheetPriceToE4PerGram(4000, 'ct')).toBe(20_000_000_000);
+    expect(sheetPriceToE4PerGram(4000, 'carat')).toBe(20_000_000_000);
     expect(parsed.accepted[0]?.imageName).toBe('min0001.png');
     expect(parsed.accepted[0]?.mineralType).toBe('Lithium');
     expect(parsed.accepted[0]?.productForm).toBe('Lithium Spodumene Ore');
