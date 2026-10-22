@@ -135,20 +135,24 @@ describe('tier requests (#95–97)', () => {
 });
 
 describe('KYC decisions (#98–101)', () => {
-  it('refuses approval while documents are unverified, then approves and verifies the user', async () => {
+  it('refuses approval while a document is rejected, then approves and verifies the user', async () => {
     await seedUser({ tier: 1, status: 'in_review', kycStatus: 'pending' });
     await KycSubmission.create({ kycId: 'KYC-7701', userId: 'USR-10401', person: 'Amina W.', org: 'Rift Valley Minerals Ltd', tier: 2, submittedAt: new Date(Date.now() - 3 * 86_400_000), status: 'in_review' });
-    await KycDocument.create({ docId: 'DOC-00001', kycId: 'KYC-7701', userId: 'USR-10401', type: 'Mining licence', name: 'licence.pdf', tier: 2, status: 'in_review', expiresOn: new Date(Date.now() + 20 * 86_400_000) });
+    await KycDocument.create({ docId: 'DOC-00001', kycId: 'KYC-7701', userId: 'USR-10401', type: 'Mining licence', name: 'licence.pdf', tier: 2, status: 'rejected', rejectionReason: 'Unreadable scan', expiresOn: new Date(Date.now() + 20 * 86_400_000) });
 
     const list = await compliance.get('/compliance/kyc');
     expect(list.status).toBe(200);
     expect(list.body.data[0]).toMatchObject({ id: 'KYC-7701', overdue: true });
+    expect(list.body.data[0].documents[0]).toMatchObject({ rejectionReason: 'Unreadable scan', fileId: null });
 
     const blocked = await compliance.post('/compliance/kyc/KYC-7701/decision', { decision: 'approve' });
     expect(blocked.status).toBe(422);
     expect(blocked.body.code).toBe('rule/documents-unverified');
 
-    await KycDocument.updateOne({ docId: 'DOC-00001' }, { $set: { status: 'verified' } });
+    const missingReason = await compliance.post('/compliance/kyc/KYC-7701/decision', { decision: 'reject', reason: 'no' });
+    expect(missingReason.status).toBe(422);
+
+    await KycDocument.updateOne({ docId: 'DOC-00001' }, { $set: { status: 'verified' }, $unset: { rejectionReason: '' } });
     const ok = await compliance.post('/compliance/kyc/KYC-7701/decision', { decision: 'approve' });
     expect(ok.status).toBe(200);
     expect(ok.body.data.status).toBe('verified');
@@ -157,6 +161,26 @@ describe('KYC decisions (#98–101)', () => {
     const docs = await compliance.get('/compliance/documents');
     expect(docs.body.meta.counts.expiringWithin35).toBe(1);
     expect(docs.body.data[0].status).toBe('expiring');
+  });
+
+  it('approves documents that are still in review and stores a rejection reason', async () => {
+    await seedUser({ tier: 1, status: 'in_review', kycStatus: 'pending' });
+    await KycSubmission.create({ kycId: 'KYC-7702', userId: 'USR-10401', person: 'Amina W.', org: 'Rift Valley Minerals Ltd', tier: 2, status: 'in_review' });
+    await KycDocument.create({ docId: 'KYC-7702:id_front', kycId: 'KYC-7702', userId: 'USR-10401', type: 'id_front', name: 'National ID — front', side: 'front', fileId: 'fil_frontside1', tier: 1, status: 'in_review' });
+    await KycDocument.create({ docId: 'KYC-7702:id_back', kycId: 'KYC-7702', userId: 'USR-10401', type: 'id_back', name: 'National ID — back', side: 'back', fileId: 'fil_backside01', tier: 1, status: 'in_review' });
+
+    const approved = await compliance.post('/compliance/kyc/KYC-7702/decision', { decision: 'approve' });
+    expect(approved.status).toBe(200);
+    expect(await KycDocument.countDocuments({ kycId: 'KYC-7702', status: 'verified' })).toBe(2);
+
+    await KycSubmission.create({ kycId: 'KYC-7703', userId: 'USR-10401', person: 'Amina W.', tier: 1, status: 'in_review' });
+    await KycDocument.create({ docId: 'KYC-7703:id_front', kycId: 'KYC-7703', userId: 'USR-10401', type: 'id_front', name: 'National ID — front', tier: 1, status: 'in_review' });
+    const rejected = await compliance.post('/compliance/kyc/KYC-7703/decision', { decision: 'reject', reason: 'The photo is cut off on the right.' });
+    expect(rejected.status).toBe(200);
+    expect(rejected.body.data.documents[0]).toMatchObject({ status: 'rejected', rejectionReason: 'The photo is cut off on the right.' });
+
+    const again = await compliance.post('/compliance/kyc/KYC-7704/decision', { decision: 'request_resubmission', reason: 'Retake both sides in even light.' });
+    expect(again.status).toBe(404);
   });
 });
 

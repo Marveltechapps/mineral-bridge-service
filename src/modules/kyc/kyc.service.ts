@@ -505,6 +505,8 @@ export interface KycView {
   /** The submission whose documents the client should see right now. */
   active: KycSubmissionRecord | null;
   documents: KycDocumentRecord[];
+  /** Captures from the latest decided submission, so a rejection can be shown with its photos. */
+  feedbackDocuments: KycDocumentRecord[];
 }
 
 export async function getKycView(userId: string): Promise<KycView> {
@@ -512,7 +514,16 @@ export async function getKycView(userId: string): Promise<KycView> {
   const [latest, draft] = await Promise.all([getLatestSubmission(userId), getDraft(userId)]);
   const active = user.kycStatus === 'pending' || user.kycStatus === 'verified' ? latest : (draft ?? null);
   const documents = active ? await listActiveDocuments(active.id) : [];
-  return { user, latest, draft, active, documents };
+  const needsFeedback =
+    !!latest &&
+    (user.kycStatus === 'rejected' || latest.status === 'rejected' || latest.status === 'resubmission_required');
+  const feedbackDocuments =
+    needsFeedback && latest && latest.id !== active?.id
+      ? await listActiveDocuments(latest.id)
+      : needsFeedback
+        ? documents
+        : [];
+  return { user, latest, draft, active, documents, feedbackDocuments };
 }
 
 export async function getWebKycStage(userId: string): Promise<WebStage> {

@@ -11,6 +11,7 @@ import { auditActor, hasAccess, staffActor } from '../shared/staff-context.js';
 import { recordAudit } from '../../audit/audit.service.js';
 import { Role } from '../../auth/auth.models.js';
 import { StaffModel } from '../../staff/staff.model.js';
+import { ensureReviewFile } from '../../../integration/customer-admin.bridge.js';
 import { signFileUrl } from '../../storage/storage.service.js';
 import { LOOKUP_TYPES, getLookups, type LookupType } from '../../reference/reference.service.js';
 import { ORDER_STAGE_LABEL, type OrderStage } from '../shared/enums.js';
@@ -215,7 +216,9 @@ export const shellRoutes: AdminRouteDef[] = [
   route(17, 'GET /files/:fileId/url', 'auth', async (req, res) => {
     const q = z.object({ disposition: z.enum(['inline', 'attachment']).default('inline') }).parse(req.query);
     const a = staffActor(req);
-    const file = await FileObject.findOne({ fileId: String(req.params.fileId) }).lean();
+    const fileId = String(req.params.fileId);
+    let file = await FileObject.findOne({ fileId }).lean();
+    if (!file && (await ensureReviewFile(fileId))) file = await FileObject.findOne({ fileId }).lean();
     if (!file) throw notFound('resource/not-found', 'File not found');
     // Access follows the owning record's module permission; unowned files need settings:view.
     const module = file.owner?.type ? FILE_OWNER_MODULE[file.owner.type] : undefined;

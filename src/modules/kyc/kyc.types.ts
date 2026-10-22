@@ -46,6 +46,12 @@ export interface KycDocumentShape {
   automated: boolean;
   source: KycSource;
   discardedAt?: Date;
+  /** Compliance decision for this capture. Absent until a reviewer acts. */
+  review?: {
+    status: 'in_review' | 'verified' | 'rejected';
+    reason?: string;
+    decidedAt?: Date;
+  };
   uploadedAt: Date;
   createdAt: Date;
   updatedAt: Date;

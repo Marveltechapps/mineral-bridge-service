@@ -26,6 +26,17 @@ const kycDocumentSchema = new Schema<KycDocumentShape>(
     automated: { type: Boolean, default: false },
     source: { type: String, enum: ['mobile', 'web'], required: true },
     discardedAt: Date,
+    review: {
+      type: new Schema(
+        {
+          status: { type: String, enum: ['in_review', 'verified', 'rejected'] },
+          reason: String,
+          decidedAt: Date,
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
     uploadedAt: { type: Date, required: true },
   },
   { timestamps: true, minimize: false },

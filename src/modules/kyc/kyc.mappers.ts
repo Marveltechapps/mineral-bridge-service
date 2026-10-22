@@ -1,6 +1,6 @@
 import { toWebKycStatus } from '../users/user.service.js';
 import type { UserRecord } from '../users/user.types.js';
-import { getIdType, requiredWebSides, type KycIdType } from './kyc.id-types.js';
+import { getIdType, requiredWebSides, reviewDocumentName, reviewDocumentSide, type KycIdType } from './kyc.id-types.js';
 import {
   deriveWebStage,
   webSideForKind,
@@ -120,9 +120,21 @@ export function unreadableHint(issues: readonly string[]): string {
 // Web (`/kyc`)
 // =============================================================================================
 
+function reviewStatus(
+  userStatus: string,
+  latest: KycView['latest'],
+  doc: KycDocumentRecord,
+): 'verified' | 'rejected' | 'in_review' | 'uploaded' {
+  if (doc.review?.status) return doc.review.status;
+  if (userStatus === 'verified' || latest?.status === 'verified') return 'verified';
+  if (userStatus === 'rejected' || latest?.status === 'rejected' || latest?.status === 'resubmission_required') return 'rejected';
+  if (userStatus === 'pending' || latest?.status === 'pending' || latest?.status === 'in_review') return 'in_review';
+  return 'uploaded';
+}
+
 /** Web `GET /kyc` / `PATCH /kyc` record. `none` is presented as `unverified` (W-4). */
 export function toWebKycRecord(view: KycView) {
-  const { user, latest, active, documents } = view;
+  const { user, latest, active, documents, feedbackDocuments } = view;
   const idType: KycIdType | undefined = getIdType(active?.idTypeId ?? latest?.idTypeId);
   const stage = deriveWebStage(user.kycStatus, idType, documents);
 
@@ -136,7 +148,8 @@ export function toWebKycRecord(view: KycView) {
     }));
 
   const selfieDoc = documents.find((d) => d.kind === 'selfie' && d.quality.passed && d.liveness?.passed !== false);
-  const rejected = user.kycStatus === 'rejected' ? latest?.rejection : undefined;
+  const rejected = user.kycStatus === 'rejected' || latest?.status === 'resubmission_required' ? latest?.rejection : undefined;
+  const shown = feedbackDocuments.length > 0 ? feedbackDocuments : documents;
 
   return {
     status: toWebKycStatus(user.kycStatus),
@@ -148,6 +161,19 @@ export function toWebKycRecord(view: KycView) {
     submittedAt: iso(latest?.submittedAt),
     decidedAt: iso(latest?.decidedAt),
     rejectionReason: rejected?.reason ?? null,
+    retryAllowed: rejected?.retryAllowed ?? null,
+    resubmissionRequired: latest?.status === 'resubmission_required',
+    documents: shown.map((doc) => {
+      const status = reviewStatus(user.kycStatus, latest, doc);
+      return {
+        kind: doc.kind,
+        side: reviewDocumentSide(doc.kind, idType?.id),
+        name: reviewDocumentName(doc.kind, idType?.id),
+        fileId: doc.fileId,
+        status,
+        rejectionReason: status === 'rejected' ? doc.review?.reason ?? rejected?.reason ?? null : null,
+      };
+    }),
     reviewSlaHours: KYC_WEB_REVIEW_SLA_HOURS,
     reference: latest?.reference ?? user.kycReference ?? null,
   };

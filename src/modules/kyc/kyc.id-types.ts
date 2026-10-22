@@ -66,6 +66,23 @@ export function requiredWebSides(idType: KycIdType | undefined): WebSide[] {
   return idType.id === 'passport' ? ['photo_page'] : ['front', 'back'];
 }
 
+/** Reviewer-facing name for one capture, including both sides of a card. */
+export function reviewDocumentName(kind: 'id_front' | 'id_back' | 'selfie', idTypeId?: string | null): string {
+  const idType = getIdType(idTypeId);
+  if (kind === 'selfie') return 'Liveness selfie';
+  const title = idType?.name ?? 'Identity document';
+  if (kind === 'id_back') return `${title} — back`;
+  if (idType?.id === 'passport') return `${title} — photo page`;
+  return `${title} — front`;
+}
+
+/** Side key stored for the operations queue. A passport photo page is the front capture. */
+export function reviewDocumentSide(kind: 'id_front' | 'id_back' | 'selfie', idTypeId?: string | null): 'front' | 'back' | 'photo_page' | 'selfie' {
+  if (kind === 'selfie') return 'selfie';
+  if (kind === 'id_back') return 'back';
+  return idTypeId === 'passport' ? 'photo_page' : 'front';
+}
+
 /** Strips whitespace and upper-cases; returns null when the number does not fit the type's pattern. */
 export function normalizeIdNumber(idType: KycIdType, raw: string): string | null {
   const cleaned = raw.replace(/\s+/g, '').toUpperCase();

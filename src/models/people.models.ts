@@ -77,6 +77,9 @@ const kycDocSchema = new Schema<any>(
     status: { type: String, enum: DOC_STATUSES, default: 'in_review', index: true },
     expiresOn: { type: Date, index: true },
     fileId: String,
+    /** `front`, `back`, `photo_page` or `selfie` — both sides of a card stay separate. */
+    side: String,
+    mimeType: String,
     rejectionReason: String,
     ...timestampFields,
   },

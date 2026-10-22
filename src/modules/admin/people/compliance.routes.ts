@@ -9,7 +9,7 @@ import { sendCustomerMessage } from '../shared/messaging.js';
 import { loadStaffMap, loadUserMap, staffFrom } from '../shared/refs.js';
 import { route, type AdminRouteDef } from '../shared/route-kit.js';
 import { auditActor } from '../shared/staff-context.js';
-import { applyAdminKycToCustomer } from '../../../integration/customer-admin.bridge.js';
+import { applyAdminKycToCustomer, backfillAdminKycFiles } from '../../../integration/customer-admin.bridge.js';
 import { KYC_SLA_MS, trackedDocumentDto, userIdsMatching } from './people.dto.js';
 
 const DOC_SORT: Record<string, string> = { type: 'type', holder: 'userId', tier: 'tier', daysToExpiry: 'expiresOn', status: 'status' };
@@ -27,7 +27,16 @@ function kycDto(k: Record<string, any>, docs: Array<Record<string, any>>) { // e
     slaDueAt: iso(slaDueAt),
     overdue: open && slaDueAt.getTime() < Date.now(),
     status: k.status,
-    documents: docs.map((d) => ({ id: d.docId, name: d.name ?? d.type, ref: d.ref ?? '', status: d.status, fileId: d.fileId ?? null })),
+    documents: docs.map((d) => ({
+      id: d.docId,
+      name: d.name ?? d.type,
+      ref: d.ref ?? '',
+      status: d.status,
+      fileId: d.fileId ?? null,
+      side: d.side ?? null,
+      mimeType: d.mimeType ?? null,
+      rejectionReason: d.rejectionReason ?? null,
+    })),
   };
 }
 
@@ -60,6 +69,7 @@ export const complianceRoutes: AdminRouteDef[] = [
         sort: sortSpec(req, { id: 'kycId', tier: 'tier', submittedAt: 'submittedAt' }, { submittedAt: 1, _id: 1 }),
         paging: paging(req),
         map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+          await Promise.all(docs.map((d) => backfillAdminKycFiles(d.kycId)));
           const byKyc = await docsFor(docs.map((d) => d.kycId));
           return docs.map((d) => kycDto(d, byKyc.get(d.kycId) ?? []));
         },
@@ -70,6 +80,7 @@ export const complianceRoutes: AdminRouteDef[] = [
   route(99, 'GET /compliance/kyc/:kycId', ['compliance', 'view'], async (req, res) => {
     const k = await KycSubmission.findOne({ kycId: String(req.params.kycId) }).lean();
     if (!k) throw notFound('resource/not-found', `KYC submission ${req.params.kycId} not found`);
+    await backfillAdminKycFiles(k.kycId);
     const [byKyc, staff] = await Promise.all([docsFor([k.kycId]), loadStaffMap((k.history ?? []).map((h: { actorId?: string }) => h.actorId))]);
     res.json({ ...kycDto(k, byKyc.get(k.kycId) ?? []), history: (k.history ?? []).map((h: Record<string, any>) => ({ action: h.action, actor: h.actorId ? staffFrom(staff, h.actorId) : null, at: iso(h.at), ...(h.reason ? { reason: h.reason } : {}) })) }); // eslint-disable-line @typescript-eslint/no-explicit-any
   }),
@@ -82,8 +93,15 @@ export const complianceRoutes: AdminRouteDef[] = [
     if (!(KYC_OPEN_STATUSES as readonly string[]).includes(k.status)) throw conflict('conflict/stale-state', `${kycId} is already ${k.status.replace('_', ' ')}.`, { details: { status: k.status } });
     const docs = await KycDocument.find({ kycId }).lean();
     if (b.decision === 'approve') {
-      const pending = docs.filter((d) => d.status === 'in_review' || d.status === 'rejected');
-      if (pending.length) throw new AppError({ status: 422, code: 'rule/documents-unverified', message: `${pending.length} document${pending.length === 1 ? ' is' : 's are'} still unverified.`, details: { documents: pending.map((d) => d.docId) } });
+      const rejected = docs.filter((d) => d.status === 'rejected');
+      if (rejected.length) {
+        throw new AppError({
+          status: 422,
+          code: 'rule/documents-unverified',
+          message: `${rejected.length} document${rejected.length === 1 ? ' is' : 's are'} still rejected. Request a resubmission before approving.`,
+          details: { documents: rejected.map((d) => d.docId) },
+        });
+      }
     }
     const actor = auditActor(req);
     const now = new Date();
@@ -97,8 +115,10 @@ export const complianceRoutes: AdminRouteDef[] = [
       ).lean();
       if (!updated) throw conflict('conflict/stale-state', `${kycId} was just decided by someone else.`);
       if (b.decision === 'approve') {
+        await KycDocument.updateMany({ kycId, status: 'in_review' }, { $set: { status: 'verified' }, $unset: { rejectionReason: '' } }, { session });
         await User.updateOne({ userId: k.userId }, { $set: { tier: k.tier, status: 'verified', kycStatus: 'verified' } }, { session });
       } else if (b.decision === 'reject') {
+        await KycDocument.updateMany({ kycId }, { $set: { status: 'rejected', rejectionReason: b.reason } }, { session });
         await User.updateOne({ userId: k.userId }, { $set: { status: 'rejected', kycStatus: 'rejected' } }, { session });
       } else {
         const targets = b.documents.length ? b.documents : docs.filter((d) => d.status !== 'verified').map((d) => d.docId);
@@ -124,6 +144,7 @@ export const complianceRoutes: AdminRouteDef[] = [
       staffId: actor.staffId,
       decision: b.decision,
       reason: b.decision === 'approve' ? undefined : b.reason,
+      documentIds: b.decision === 'request_resubmission' ? b.documents : undefined,
     });
     const text = b.decision === 'approve' ? `Your Tier ${k.tier} verification is approved.` : b.decision === 'reject' ? `Your verification was not approved: ${b.reason}` : `Please resubmit your documents: ${b.reason}`;
     await sendCustomerMessage({ userId: k.userId, subject: 'Verification update', body: text, channels: ['in_app'], related: { type: 'kyc', id: kycId }, sentBy: actor.staffId }).catch(() => undefined);
