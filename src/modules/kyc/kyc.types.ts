@@ -1,6 +1,11 @@
 import type { Types } from 'mongoose';
 
-export type KycDocKind = 'id_front' | 'id_back' | 'selfie';
+export type KycDocKind =
+  | 'id_front'
+  | 'id_back'
+  | 'selfie'
+  | 'proof_of_address'
+  | 'business_registration';
 export type KycQualityIssue = 'glare' | 'blur' | 'cropped' | 'too_dark' | 'low_resolution';
 export type KycSource = 'mobile' | 'web';
 
@@ -51,7 +56,10 @@ export interface KycDocumentShape {
     status: 'in_review' | 'verified' | 'rejected';
     reason?: string;
     decidedAt?: Date;
+    decidedBy?: string;
   };
+  /** Dashboard per-document flag shown to the customer. */
+  flag?: { message: string; at: Date; by?: string };
   uploadedAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -71,8 +79,12 @@ export interface KycSubmissionShape {
   idTypeId?: string;
   /** Full ID number — PII, `select: false`; reviewers load it explicitly. */
   idNumber?: string;
+  /** HMAC blind index for duplicate-identity detection. */
+  idNumberHash?: string;
   idNumberLast4?: string;
   documentIds: Types.ObjectId[];
+  /** Required capture kinds for this submission (v2). */
+  requiredKinds?: KycDocKind[];
   requestedTier?: 1 | 2 | 3;
   declaredDetails: { fullName?: string; dateOfBirth?: string };
   consent: { given: boolean; at?: Date; ip?: string };
@@ -85,9 +97,18 @@ export interface KycSubmissionShape {
   estimatedDecisionBy?: Date;
   reviewStartedAt?: Date;
   decidedAt?: Date;
-  /** Staff public id (`STF-…`). */
+  /** Staff public id (`STF-…` / `AD-…`). */
   decidedBy?: string;
+  /** SLA deadline for review. */
+  slaDueAt?: Date;
   rejection?: KycRejection;
+  requestedDocuments?: { kind: KycDocKind; reason?: string; at: Date; by?: string }[];
+  history?: {
+    action: string;
+    actor: { kind: string; id: string; name?: string; role?: string };
+    at: Date;
+    reason?: string;
+  }[];
   reviewNotes?: string;
   notifyOnDecision: boolean;
   createdAt: Date;

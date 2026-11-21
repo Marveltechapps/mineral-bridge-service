@@ -29,6 +29,12 @@ export type CurrencyPref = (typeof CURRENCY_PREFS)[number];
 
 export type AddressKind = 'pickup' | 'delivery';
 
+export type AccountStatus = 'active' | 'suspended' | 'closed';
+export type SignInMethod = 'whatsapp' | 'sms' | 'email';
+export type BuyerType = 'refinery' | 'house' | 'industry' | 'jewel' | 'investor' | 'wholesale';
+/** `form` is legacy; API contract uses `exporter` (both accepted). */
+export type SellerType = 'asm' | 'industrial' | 'coop' | 'dealer' | 'form' | 'exporter' | 'scrap';
+
 export interface UserAddress {
   /** `adr_…` */
   id: string;
@@ -38,6 +44,8 @@ export interface UserAddress {
   city: string;
   region: string;
   country: string;
+  /** Receiver company (shipping form `org`). */
+  org?: string;
   contactPerson?: string;
   contactPhone?: string;
   isDefault: boolean;
@@ -45,6 +53,28 @@ export interface UserAddress {
   source?: 'profile' | 'manual';
   geo?: { lat: number; lng: number };
   savedAt: Date;
+}
+
+export interface UserBusiness {
+  buyerType?: BuyerType;
+  sellerType?: SellerType;
+  name?: string;
+  registrationNo?: string;
+}
+
+export interface UserSuspension {
+  reason: string;
+  at: Date;
+  by?: { kind: string; id: string; name?: string; role?: string };
+  liftedAt?: Date;
+  liftedBy?: { kind: string; id: string; name?: string; role?: string };
+}
+
+export interface UserStats {
+  orders?: number;
+  sells?: number;
+  openOrders?: number;
+  lastOrderAt?: Date;
 }
 
 export interface UserPreferences {
@@ -69,15 +99,21 @@ export interface UserProfile {
 
 /** The persisted shape (no `id`). */
 export interface UserShape {
+  /** Public customer number `C-…` (unique once backfilled). */
+  customerNo?: string;
   phone?: string;
   phoneVerifiedAt?: Date;
+  whatsapp?: string;
+  whatsappVerifiedAt?: Date;
   email?: string;
   emailVerifiedAt?: Date;
+  signInMethod?: SignInMethod;
 
   passwordHash?: string;
   passwordChangedAt?: Date;
 
   roles: UserRole[];
+  business?: UserBusiness;
 
   kycStatus: KycStatus;
   kycReference?: string;
@@ -87,6 +123,9 @@ export interface UserShape {
   tier: Tier;
   /** Set once the user has explicitly picked a tier (drives mobile `onboarding.nextStep`). */
   tierChosenAt?: Date;
+
+  accountStatus: AccountStatus;
+  suspension?: UserSuspension;
 
   profile: UserProfile;
   preferences: UserPreferences;
@@ -103,6 +142,7 @@ export interface UserShape {
   deletionScheduledAt?: Date;
   deletionReason?: string;
 
+  stats?: UserStats;
   lastLoginAt?: Date;
   createdAt: Date;
   updatedAt: Date;

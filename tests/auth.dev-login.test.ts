@@ -31,10 +31,10 @@ useMemoryMongo('auth_dev_login');
 
 const APP_EMAIL = 'dev.app@example.com';
 const APP_PASSWORD = 'local-app-password';
-const APP_OTP = '847291';
+const APP_OTP = '8472';
 const ADMIN_EMAIL = 'dev.admin@example.com';
 const ADMIN_PASSWORD = 'local-admin-password';
-const ADMIN_OTP = '908172';
+const ADMIN_OTP = '9081';
 
 function devConfig(overrides: Partial<DevLoginConfig> = {}): DevLoginConfig {
   const permissions = noPermissions();
@@ -85,10 +85,10 @@ describe('development login configuration', () => {
   };
 
   it('rejects a well-known code and a shared email', () => {
-    expect(isAcceptableDevOtp('123456')).toBe(false);
-    expect(isAcceptableDevOtp('000000')).toBe(false);
+    expect(isAcceptableDevOtp('1234')).toBe(false);
+    expect(isAcceptableDevOtp('0000')).toBe(false);
     expect(isAcceptableDevOtp(APP_OTP)).toBe(true);
-    const weak = readDevLoginConfig({ ...base, DEV_LOGIN_OTP: '123456' });
+    const weak = readDevLoginConfig({ ...base, DEV_LOGIN_OTP: '1234' });
     expect(weak.app).toBeNull();
     expect(weak.misconfigured).toContain('app-otp-rejected');
     const shared = readDevLoginConfig({ ...base, DEV_ADMIN_LOGIN_EMAIL: APP_EMAIL });
@@ -118,7 +118,7 @@ describe('development login flow', () => {
       ip: '203.0.113.10',
     });
     expect(started.developmentOtp).toBe(APP_OTP);
-    expect(started.codeLength).toBe(6);
+    expect(started.codeLength).toBe(4);
     const stored = await OtpChallengeModel.findOne({ challengeId: started.challengeId }).select('+codeHash').lean();
     expect(JSON.stringify(stored)).not.toContain(APP_PASSWORD);
     expect(stored?.codeHash).not.toBe(APP_OTP);

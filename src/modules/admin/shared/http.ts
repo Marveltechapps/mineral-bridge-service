@@ -19,7 +19,7 @@ export function action<T>(data: T, message: string, auditId: string): ActionResu
   return { data, message, auditId };
 }
 
-/** Percentage change from rom to 	o (0 when rom is 0). */
+/** Percentage change from previous to next (0 when previous is 0). */
 
 export function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -100,7 +100,7 @@ export type PageOptions<D, R> = {
   extraMeta?: () => Promise<Record<string, unknown>>;
 };
 
-export async function pageOf<D, R>(model: Model<any>, opts: PageOptions<D, R>): Promise<AdminPage<R> & { meta: Record<string, unknown> }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+export async function pageOf<D, R>(model: Model<any>, opts: PageOptions<D, R>): Promise<AdminPage<R> & { meta: Record<string, unknown> }> {  
   const [docs, total] = await Promise.all([
     model.find(opts.filter).sort(opts.sort).skip(opts.paging.skip).limit(opts.paging.pageSize).lean<D[]>(),
     model.countDocuments(opts.filter),

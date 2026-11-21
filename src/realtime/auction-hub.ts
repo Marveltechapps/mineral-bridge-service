@@ -8,7 +8,8 @@ import { EventEmitter } from 'node:events';
  * - A small ring buffer per channel enables `Last-Event-ID` / `since` replay.
  * - `to` targets a single user (e.g. `bidder.outbid`).
  *
- * For multi-instance deployments swap `publish`'s transport for Redis pub/sub; the interface stays.
+ * Multi-instance: set REDIS_URL to enable the Redis pub/sub bridge in redis-bridge.ts.
+ * Without REDIS_URL this hub is single-process only.
  */
 
 export type HubEvent = {

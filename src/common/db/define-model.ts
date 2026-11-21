@@ -12,7 +12,7 @@ import mongoose, { type Model, type Schema } from 'mongoose';
  * Documents are intentionally loosely typed: the wire contract is enforced by the DTO mappers and
  * zod validators, not by Mongoose inference.
  */
-export type AnyDoc = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+export type AnyDoc = Record<string, any>;  
 
 export function defineModel(name: string, schema: Schema, collection?: string): Model<AnyDoc> {
   const modelName = `Adm${name}`;

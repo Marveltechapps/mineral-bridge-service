@@ -1,5 +1,5 @@
 import { createSignedUrl } from '../../common/storage/signed-url.js';
-import { mobileMoney, webMoney } from '../../common/utils/currency.js';
+import { displayMoney, mobileMoney, webMoney } from '../../common/utils/currency.js';
 import { now } from '../../common/utils/clock.js';
 import { mobileQuantity, webQuantity } from '../../common/utils/quantity.js';
 import { unitPriceMinorPerGram } from '../../common/utils/pricing-math.js';
@@ -14,6 +14,11 @@ const bytesMeta = (kind: string, bytes?: number, issuedAt?: Date) => {
   const size = bytes ? (bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`) : '—';
   return `${kind === 'application/pdf' || !kind ? 'PDF' : kind} · ${size}${issuedAt ? ` · issued ${watDisplay(issuedAt).split(' · ')[0]}` : ''}`;
 };
+
+/** Catalog totals stay off the wire until the desk confirms the price agreed with the customer. */
+function agreedTotal(o: IOrder) {
+  return o.priceConfirmed ? o.total : null;
+}
 
 function stageProgress(o: IOrder): number {
   if (o.status === 'completed') return 100;
@@ -46,7 +51,8 @@ export function toMobileOrderCreated(o: IOrder) {
     statusLabel: s.label,
     product: { id: first?.productId ?? null, name: first?.name ?? 'Order', imageUrl: first?.imageUrl ?? null },
     quantity: mobileQuantity(o.totalGrams),
-    indicativeTotal: mobileMoney(o.total),
+    indicativeTotal: agreedTotal(o) ? mobileMoney(agreedTotal(o)) : null,
+    priceConfirmed: Boolean(o.priceConfirmed),
     paymentTaken: o.paymentTaken,
     nextSteps: NEXT_STEPS.map((st, idx) => ({ ...st, state: idx === 0 ? 'active' : 'pending' })),
     createdAt: o.createdAt.toISOString(),
@@ -61,7 +67,8 @@ export function toMobileOrderListItem(o: IOrder) {
     reference: o.reference,
     product: { name: first?.name ?? 'Order', imageUrl: first?.imageUrl ?? null },
     quantity: mobileQuantity(o.totalGrams),
-    value: mobileMoney(o.total, { compact: true }),
+    value: agreedTotal(o) ? mobileMoney(agreedTotal(o), { compact: true }) : null,
+    priceConfirmed: Boolean(o.priceConfirmed),
     status: s.status,
     statusLabel: s.label,
     tone: s.tone,
@@ -84,7 +91,7 @@ export function toMobileOrderDetail(o: IOrder) {
     quantity: mobileQuantity(o.totalGrams),
     escrow: {
       funded: o.settlement.status === 'held' || o.settlement.status === 'released',
-      amount: mobileMoney(o.total),
+      amount: agreedTotal(o) ? mobileMoney(agreedTotal(o)) : null,
       fundedAt: iso(o.settlement.fundedAt),
       releasedAt: iso(o.settlement.releasedAt),
     },
@@ -177,7 +184,9 @@ export function toWebOrder(o: IOrder) {
       gradientTo: '#92400e',
     },
     quantity: webQuantity(o.totalGrams),
-    value: webMoney(o.total),
+    value: agreedTotal(o) ? webMoney(agreedTotal(o)) : null,
+    priceDisplay: agreedTotal(o) ? displayMoney(agreedTotal(o)!) : null,
+    priceConfirmed: Boolean(o.priceConfirmed),
     placedAt: o.createdAt.toISOString(),
     status: st.status,
     statusLabel: st.label,

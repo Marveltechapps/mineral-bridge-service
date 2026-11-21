@@ -58,7 +58,7 @@ export function kindForWebSide(side: WebSide): Exclude<KycDocKind, 'selfie'> {
 }
 
 export function webSideForKind(kind: KycDocKind, idType: KycIdType | undefined): WebSide | null {
-  if (kind === 'selfie') return null;
+  if (kind === 'selfie' || kind === 'proof_of_address' || kind === 'business_registration') return null;
   if (kind === 'id_back') return 'back';
   return idType?.id === 'passport' ? 'photo_page' : 'front';
 }
@@ -318,6 +318,14 @@ export async function removeCapture(userId: string, side: WebSide): Promise<void
   const draft = await getDraft(userId);
   if (!draft) return;
   await discardActive(draft.id, [kindForWebSide(side)]);
+}
+
+/** v2 KYC-04: remove by document kind. */
+export async function removeDocumentKind(userId: string, kind: KycDocKind): Promise<void> {
+  guardEditable(await getUserOrThrow(userId));
+  const draft = await getDraft(userId);
+  if (!draft) return;
+  await discardActive(draft.id, [kind]);
 }
 
 // =============================================================================================

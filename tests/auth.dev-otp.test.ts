@@ -64,8 +64,8 @@ describe('development OTP delivery', () => {
         acceptedTermsVersion: '1',
       },
     });
-    expect(info.developmentOtp).toMatch(/^\d{6}$/);
-    expect(info.codeLength).toBe(6);
+    expect(info.developmentOtp).toMatch(/^\d{4}$/);
+    expect(info.codeLength).toBe(4);
     expect(mail.outbox).toHaveLength(0);
     expect(await mongoose.connection.collection('users').countDocuments({ email })).toBe(0);
     const created = await verifyWebOtp({ challengeId: info.challengeId, code: info.developmentOtp!, device: {} });
@@ -91,7 +91,7 @@ describe('development OTP delivery', () => {
       destination: phone,
       payload: { registration: { method: 'mobile', identifier: phone } },
     });
-    expect(info.developmentOtp).toMatch(/^\d{6}$/);
+    expect(info.developmentOtp).toMatch(/^\d{4}$/);
     expect(calls).toHaveLength(0);
     const verified = await verifyChallenge({
       challengeId: info.challengeId,

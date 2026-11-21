@@ -51,10 +51,10 @@ export const webOtpRequestBody = z
     }
   });
 
-/** Production web codes stay 4 digits. Development OTP challenges are 6 digits. */
+/** Every web verification code is 4 digits. */
 export const webOtpVerifyBody = z.object({
   challengeId,
-  code: z.string().regex(/^\d{4}$|^\d{6}$/, 'Enter the verification code'),
+  code: z.string().regex(/^\d{4}$/, 'Enter the 4-digit code'),
   /** Absent or true keeps the existing persistent refresh cookie. */
   rememberDevice: z.boolean().optional(),
 });

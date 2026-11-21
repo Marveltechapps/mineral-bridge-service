@@ -12,7 +12,7 @@ import {
   adminSsoStartBody,
   adminUnlockBody,
 } from './admin.auth.schemas.js';
-import { optionalStaff, requireCsrf, requireStaff, requireUnlockedConsole } from './auth.middleware.js';
+import { attachStaffCsrf, optionalStaff, requireCsrf, requireStaff, requireUnlockedConsole } from './auth.middleware.js';
 import { mountAdminDevLogin } from './dev-login.routes.js';
 
 /**
@@ -20,7 +20,8 @@ import { mountAdminDevLogin } from './dev-login.routes.js';
  *
  *  - Public (no session): sign-in, sso/*, otp/*, password-reset*.
  *  - Session, CSRF, *locked allowed*: unlock, sign-out, GET /me (and lock, which is idempotent).
- *  - Session, CSRF, unlocked only: refresh. A locked console may not slide its own idle timer.
+ *  - Session, CSRF, unlocked only: refresh. Refresh rotates the cookie.
+ *    Ordinary requests slide the idle deadline without rotating, so other tabs stay signed in.
  */
 export function createAdminAuthRouter(): Router {
   const r = Router();
@@ -45,11 +46,11 @@ export function createAdminAuthRouter(): Router {
     asyncHandler(ctrl.passwordResetConfirm),
   );
 
-  r.post('/auth/refresh', requireStaff, requireCsrf, requireUnlockedConsole, asyncHandler(ctrl.refresh));
-  r.post('/auth/lock', requireStaff, requireCsrf, asyncHandler(ctrl.lock));
-  r.post('/auth/unlock', requireStaff, requireCsrf, validate({ body: adminUnlockBody }), asyncHandler(ctrl.unlock));
-  r.post('/auth/sign-out', requireStaff, requireCsrf, asyncHandler(ctrl.signOut));
-  r.get('/me', requireStaff, asyncHandler(ctrl.me));
+  r.post('/auth/refresh', requireStaff, requireCsrf, requireUnlockedConsole, attachStaffCsrf, asyncHandler(ctrl.refresh));
+  r.post('/auth/lock', requireStaff, requireCsrf, attachStaffCsrf, asyncHandler(ctrl.lock));
+  r.post('/auth/unlock', requireStaff, requireCsrf, attachStaffCsrf, validate({ body: adminUnlockBody }), asyncHandler(ctrl.unlock));
+  r.post('/auth/sign-out', requireStaff, requireCsrf, attachStaffCsrf, asyncHandler(ctrl.signOut));
+  r.get('/me', requireStaff, attachStaffCsrf, asyncHandler(ctrl.me));
 
   return r;
 }

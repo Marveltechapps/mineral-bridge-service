@@ -23,10 +23,10 @@ export const adminSsoCallbackBody = z.object({
   state: z.string().min(1).max(4096),
 });
 
-/** Admin codes are 6 digits. */
+/** Admin codes are 4 digits. */
 export const adminOtpVerifyBody = z.object({
   challengeId: z.string().min(4).max(64),
-  code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+  code: z.string().regex(/^\d{4}$/, 'Enter the 4-digit code'),
 });
 
 export const adminOtpResendBody = z.object({ challengeId: z.string().min(4).max(64) });

@@ -91,7 +91,7 @@ export const overviewRoutes: AdminRouteDef[] = [
     const negActive = neg.reduce((a, r) => a + (r.n as number), 0);
     const awaiting = neg.filter((r) => String(r._id).startsWith('awaiting')).reduce((a, r) => a + (r.n as number), 0);
 
-    /* eslint-disable @typescript-eslint/no-explicit-any */
+     
     const stageIdx = (s: string) => (LC_STAGES as readonly string[]).indexOf(s);
     const sumMinor = (rows: Array<Record<string, any>>) => rows.reduce((a, r) => a + (r.amount?.amountMinor ?? 0), 0);
     const issued = lcs.filter((l) => stageIdx(l.status) >= 1);

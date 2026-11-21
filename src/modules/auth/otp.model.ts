@@ -1,7 +1,7 @@
 import mongoose, { Schema, type Model } from 'mongoose';
 
 export type OtpClient = 'mobile' | 'web' | 'admin';
-export type OtpIntent = 'signup' | 'login' | 'staff_login' | 'dev_login';
+export type OtpIntent = 'signup' | 'login' | 'contact_change' | 'staff_login' | 'dev_login';
 export type OtpChannel = 'sms' | 'voice' | 'whatsapp' | 'email';
 
 export interface OtpChallengeShape {
@@ -46,7 +46,11 @@ const otpChallengeSchema = new Schema<OtpChallengeShape>(
   {
     challengeId: { type: String, required: true, unique: true },
     client: { type: String, enum: ['mobile', 'web', 'admin'], required: true },
-    intent: { type: String, enum: ['signup', 'login', 'staff_login', 'dev_login'], required: true },
+    intent: {
+      type: String,
+      enum: ['signup', 'login', 'contact_change', 'staff_login', 'dev_login'],
+      required: true,
+    },
     channel: { type: String, enum: ['sms', 'voice', 'whatsapp', 'email'], required: true },
     destination: { type: String, required: true },
     maskedDestination: { type: String, required: true },

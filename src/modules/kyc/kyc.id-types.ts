@@ -67,9 +67,14 @@ export function requiredWebSides(idType: KycIdType | undefined): WebSide[] {
 }
 
 /** Reviewer-facing name for one capture, including both sides of a card. */
-export function reviewDocumentName(kind: 'id_front' | 'id_back' | 'selfie', idTypeId?: string | null): string {
+export function reviewDocumentName(
+  kind: 'id_front' | 'id_back' | 'selfie' | 'proof_of_address' | 'business_registration',
+  idTypeId?: string | null,
+): string {
   const idType = getIdType(idTypeId);
   if (kind === 'selfie') return 'Liveness selfie';
+  if (kind === 'proof_of_address') return 'Proof of address';
+  if (kind === 'business_registration') return 'Business registration';
   const title = idType?.name ?? 'Identity document';
   if (kind === 'id_back') return `${title} — back`;
   if (idType?.id === 'passport') return `${title} — photo page`;
@@ -77,8 +82,12 @@ export function reviewDocumentName(kind: 'id_front' | 'id_back' | 'selfie', idTy
 }
 
 /** Side key stored for the operations queue. A passport photo page is the front capture. */
-export function reviewDocumentSide(kind: 'id_front' | 'id_back' | 'selfie', idTypeId?: string | null): 'front' | 'back' | 'photo_page' | 'selfie' {
+export function reviewDocumentSide(
+  kind: 'id_front' | 'id_back' | 'selfie' | 'proof_of_address' | 'business_registration',
+  idTypeId?: string | null,
+): 'front' | 'back' | 'photo_page' | 'selfie' | 'other' {
   if (kind === 'selfie') return 'selfie';
+  if (kind === 'proof_of_address' || kind === 'business_registration') return 'other';
   if (kind === 'id_back') return 'back';
   return idTypeId === 'passport' ? 'photo_page' : 'front';
 }

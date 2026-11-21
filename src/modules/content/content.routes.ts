@@ -5,7 +5,9 @@ import { unitPriceMinorPerGram } from '../../common/utils/pricing-math.js';
 import { iso } from '../../common/utils/time-display.js';
 import { ProductModel } from '../../models/catalog.model.js';
 import { optionalUser } from '../auth/auth.middleware.js';
+import { homePageBanners, listMasterBanners, readHomeBannerImage } from '../catalog/banners.js';
 import { catalogService } from '../catalog/catalog.service.js';
+import { logger } from '../../config/logger.js';
 import type { ReferenceKind } from '../../models/reference.model.js';
 import { contentService as svc } from './content.service.js';
 
@@ -120,6 +122,33 @@ export function webReferenceRouter(): Router {
       res.json({ items: await svc.reference(kind) });
     }));
   }
+  // Master Sheet Banner tab. Registered before /content/:key.
+  r.get('/content/banners', ah(async (_req, res) => {
+    cache(res, 300);
+    try {
+      const items = homePageBanners(await listMasterBanners());
+      res.json({ items });
+    } catch (err) {
+      logger.warn({ err }, 'Master Sheet home banners could not be read');
+      res.json({ items: [] });
+    }
+  }));
+  // Browsers negotiate AVIF and the sheet host then fails Home Page 2. This returns the JPEG.
+  r.get('/content/banners/image', ah(async (req, res) => {
+    try {
+      const image = await readHomeBannerImage(String(req.query.name ?? ''));
+      if (!image) {
+        res.status(404).json({ error: 'banner-not-found' });
+        return;
+      }
+      cache(res, 300);
+      res.setHeader('Content-Type', image.contentType);
+      res.send(image.body);
+    } catch (err) {
+      logger.warn({ err }, 'Master Sheet home banner image could not be read');
+      res.status(502).json({ error: 'banner-unavailable' });
+    }
+  }));
   // Contract static content endpoints
   r.get('/content/faq', ah(async (_req, res) => { cache(res); res.json({ items: await svc.reference('faq') }); }));
   r.get('/content/how-it-works', ah(async (_req, res) => { cache(res); res.json((await svc.block('how-it-works')).data); }));

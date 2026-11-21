@@ -102,7 +102,7 @@ These 17 `METHOD + path` pairs exist in both contracts with **different** reques
 | # | Method + path | Mobile / Web refs | Severity | Main difference |
 |--:|---|---|---|---|
 | 1 | `POST /auth/otp/request` | #1 / #2 | high | `phone+intent` vs `method+identifier`; web adds email OTP |
-| 2 | `POST /auth/otp/verify` | #2 / #3 | high | 6-digit, refresh token in body vs 4-digit, refresh cookie; different user payload |
+| 2 | `POST /auth/otp/verify` | #2 / #3 | high | 4-digit on every client; mobile returns the refresh token in the body, web uses a refresh cookie; different user payload |
 | 3 | `POST /auth/otp/resend` | #3 / #4 | medium | web contract has no schema (W-7) |
 | 4 | `DELETE /auth/account` | #7 / #11 | high | PIN header + `204` vs confirmation body + `202` scheduled |
 | 5 | `GET /auth/sessions` | #8 / #9 | medium | `data[]`/`current` vs `items[]`/`isCurrent` |
@@ -152,7 +152,7 @@ Error codes are part of the contract and differ (`kyc/not-verified` vs `kyc/not-
 | | **Mobile** (`/v1`) | **Web** (`/v1`) | **Admin** (`/admin/v1`) |
 |---|---|---|---|
 | Principal | `User` (customer) | `User` (customer) | `StaffUser` (separate collection) |
-| Login | Phone + **6-digit** SMS/voice/WhatsApp OTP. No passwords | Mobile/email/WhatsApp OTP, **4-digit**. `POST /auth/password/change` exists (W-6) | Email + password (or SSO) → **6-digit** OTP challenge |
+| Login | Phone + **4-digit** SMS/voice/WhatsApp OTP. No passwords | Mobile/email/WhatsApp OTP, **4-digit**. `POST /auth/password/change` exists (W-6) | Email + password (or SSO) → **4-digit** OTP challenge |
 | Access credential | `Authorization: Bearer` JWT, 15 min | `Authorization: Bearer` JWT, 15 min (memory only) | **None** — opaque server session in `mb_admin_session` |
 | Refresh | `refreshToken` in the **JSON body**; 60 days, rotating; replay → `401 auth/refresh-reused` and revoke the whole family | **`mb_refresh` cookie**: `HttpOnly; Secure; SameSite=Strict`, 30 days, rotating; old token tolerated for a **10 s grace window** | `POST /auth/refresh` rotates the session cookie, returns `X-CSRF-Token` |
 | Refresh endpoint | `POST /auth/token/refresh` | `POST /auth/refresh` (the only `credentials: 'include'` call) | `POST /auth/refresh` |

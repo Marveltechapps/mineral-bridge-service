@@ -9,10 +9,11 @@ export const FEE_BPS: Record<string, number> = {
   seller_payout: 100,
   auction_settlement: 200,
   btc_settlement: 100,
+  refund: 0,
 };
 
 export async function createSettlement(input: {
-  kind: 'buy_settlement' | 'seller_payout' | 'auction_settlement' | 'btc_settlement';
+  kind: 'buy_settlement' | 'seller_payout' | 'auction_settlement' | 'btc_settlement' | 'refund';
   ref: { type: string; id: string };
   partyId?: string;
   amount: StoredMoney;

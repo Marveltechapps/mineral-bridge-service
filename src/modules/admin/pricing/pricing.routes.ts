@@ -16,7 +16,7 @@ import { getPlatformValues } from '../settings/settings.service.js';
 const RATE_SORT: Record<string, string> = { mineral: 'mineral', buy: 'buy.amountMinor', sell: 'sell.amountMinor', trend: 'trend24hPct' };
 const FEED_SYNC_SECONDS = 120;
 
-export function rateDto(r: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function rateDto(r: any) {  
   return { id: r.rateId, mineral: r.mineral, grade: r.grade, buy: outUnitPrice(r.buy), sell: outUnitPrice(r.sell), source: r.source, updatedAt: iso(r.updatedAt), trend24hPct: r.trend24hPct ?? 0 };
 }
 
@@ -143,7 +143,7 @@ export const pricingRoutes: AdminRouteDef[] = [
         filter,
         sort: { createdAt: 1, _id: 1 },
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const users = await loadUserMap(docs.map((d) => d.userId));
           return docs.map((o) => offerDto(o, partyFrom(users, o.userId)));
         },
@@ -217,7 +217,7 @@ export const pricingRoutes: AdminRouteDef[] = [
   }, { idem: 'required', body: decisionBody }),
 ];
 
-function offerDto(o: any, party: unknown) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function offerDto(o: any, party: unknown) {  
   return {
     id: o.offerId,
     orderId: o.orderId,

@@ -6,6 +6,8 @@ import { buildCustomerV1Router } from '../../src/app-clients/v1.js';
 import { errorHandler, notFoundHandler } from '../../src/common/middleware/error-handler.js';
 import { requestContext } from '../../src/common/middleware/request-context.js';
 import { AuctionModel, BidModel, CartModel, ContractModel, CounterModel, IdempotencyModel, LedgerModel, LetterOfCreditModel, NegotiationModel, NotificationModel, OrderModel, ProductModel } from '../../src/models/index.js';
+import { PaymentModel, RefundModel, SellerPayoutModel, IssuedDocumentModel } from '../../src/models/workflow.model.js';
+import { SupportTicketModel } from '../../src/models/support.model.js';
 import { UserModel as CoreUserModel } from '../../src/modules/users/user.model.js';
 import { setClock } from '../../src/common/utils/clock.js';
 
@@ -15,13 +17,29 @@ export async function startDb(): Promise<void> {
   mongod = await MongoMemoryServer.create();
   await mongoose.connect(mongod.getUri(), { dbName: 'mb_test' });
   // Unique indexes (idempotency claim, bid seq, settlement key) are what make the concurrency tests meaningful.
-  await Promise.all([AuctionModel, BidModel, CartModel, ContractModel, CounterModel, IdempotencyModel, LedgerModel, LetterOfCreditModel, NegotiationModel, NotificationModel, OrderModel, ProductModel].map((m) => m.init()));
+  await Promise.all([
+    AuctionModel, BidModel, CartModel, ContractModel, CounterModel, IdempotencyModel, LedgerModel,
+    LetterOfCreditModel, NegotiationModel, NotificationModel, OrderModel, ProductModel,
+    PaymentModel, RefundModel, SellerPayoutModel, IssuedDocumentModel, SupportTicketModel,
+  ].map((m) => m.init()));
 }
 
 export async function stopDb(): Promise<void> {
   setClock(null);
-  await mongoose.disconnect();
-  await mongod?.stop();
+  // Force-close so in-flight ops (SSE / long polls) cannot reject after Vitest tears down the file.
+  try {
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.connection.close(true);
+    }
+  } catch {
+    /* ignore mid-flight interruption during teardown */
+  }
+  try {
+    await mongod?.stop();
+  } catch {
+    /* ignore */
+  }
+  mongod = undefined;
 }
 
 export async function clearDb(): Promise<void> {

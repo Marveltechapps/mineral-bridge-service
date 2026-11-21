@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
 
@@ -89,6 +91,13 @@ const envSchema = z.object({
   RATE_FEED_PROVIDER: z.string().optional(),
   ESIGN_PROVIDER: z.string().optional(),
 
+  /**
+   * Optional Redis URL for multi-instance realtime fan-out (WS/SSE hubs).
+   * When unset, the realtime hub is single-process only.
+   * Example: redis://127.0.0.1:6379/0
+   */
+  REDIS_URL: z.string().optional(),
+
   // Staff SSO (OIDC-style). Unset => /auth/sso/* return 503 auth/sso-unconfigured.
   SSO_AUTHORIZE_URL: z.string().optional(),
   SSO_TOKEN_URL: z.string().optional(),
@@ -158,6 +167,34 @@ function splitOrigins(value: string): string[] {
     .filter(Boolean);
 }
 
+function uniqueOrigins(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+/**
+ * Customer and admin browsers do not share one allow-list.
+ * ALLOWED_ORIGINS used to be appended to both, which granted the customer web
+ * origin credentialed CORS on /v2/admin in any deployment that still set it.
+ * Production ignores it. Development uses it only to fill a list that was left empty.
+ */
+export function resolveCorsOriginLists(input: {
+  nodeEnv: string;
+  web: string;
+  admin: string;
+  allowed: string;
+}): { corsWebOrigins: string[]; corsAdminOrigins: string[] } {
+  const web = uniqueOrigins(splitOrigins(input.web));
+  const admin = uniqueOrigins(splitOrigins(input.admin));
+  if (input.nodeEnv === 'production') {
+    return { corsWebOrigins: web, corsAdminOrigins: admin };
+  }
+  const allowed = uniqueOrigins(splitOrigins(input.allowed));
+  return {
+    corsWebOrigins: web.length > 0 ? web : allowed,
+    corsAdminOrigins: admin.length > 0 ? admin : allowed,
+  };
+}
+
 const OTP_PROVIDER_NAMES = ['fake', 'twilio', 'africastalking', 'spearuc'] as const;
 const EMAIL_PROVIDER_NAMES = ['fake', 'smtp', 'resend'] as const;
 type OtpProviderName = (typeof OTP_PROVIDER_NAMES)[number];
@@ -203,6 +240,38 @@ const DEV_SECRET_NAMES = [
 
 let cached: Env | null = null;
 
+/**
+ * A missing development secret used to be minted in memory, so every restart
+ * changed the CSRF key while the session cookie (a hash lookup) stayed valid.
+ * Persist the first values into `.env` and reuse them. Production must set its own.
+ */
+function persistMissingDevSecrets(): void {
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) return;
+  if ((process.env.NODE_ENV ?? 'development') !== 'development') return;
+  const missing = DEV_SECRET_NAMES.filter((name) => (process.env[name] ?? '').trim().length < 32);
+  if (missing.length === 0) return;
+  const file = path.resolve(process.cwd(), '.env');
+  if (!existsSync(file)) return;
+
+  const generated = missing.map((name) => {
+    const value = randomBytes(32).toString('hex');
+    process.env[name] = value;
+    return `${name}=${value}`;
+  });
+  try {
+    const current = readFileSync(file, 'utf8');
+    const newline = current.includes('\r\n') ? '\r\n' : '\n';
+    const prefix = current.length === 0 || current.endsWith('\n') ? '' : newline;
+    appendFileSync(
+      file,
+      `${prefix}# Stable local secrets. A restart keeps the same session and CSRF keys.${newline}${generated.join(newline)}${newline}`,
+      'utf8',
+    );
+  } catch {
+    for (const name of missing) delete process.env[name];
+  }
+}
+
 export function loadEnv(): Env {
   if (cached) return cached;
 
@@ -215,6 +284,7 @@ export function loadEnv(): Env {
     const port = process.env.PORT && /^\d+$/.test(process.env.PORT) ? process.env.PORT : '4000';
     process.env.PUBLIC_API_BASE_URL = `http://localhost:${port}`;
   }
+  persistMissingDevSecrets();
 
   const defaultsForTest: Record<string, string> = {};
   if (process.env.NODE_ENV === 'test') {
@@ -256,14 +326,19 @@ export function loadEnv(): Env {
       );
     }
   }
-  const extraOrigins = splitOrigins(process.env.ALLOWED_ORIGINS ?? '');
+  const lists = resolveCorsOriginLists({
+    nodeEnv: data.NODE_ENV,
+    web: data.CORS_WEB_ORIGINS,
+    admin: data.CORS_ADMIN_ORIGINS,
+    allowed: process.env.ALLOWED_ORIGINS ?? '',
+  });
   cached = {
     ...data,
     OTP_PROVIDER: otpProvider,
     EMAIL_PROVIDER: emailProvider,
     COOKIE_SECURE: Boolean(data.COOKIE_SECURE),
-    corsWebOrigins: [...new Set([...splitOrigins(data.CORS_WEB_ORIGINS), ...extraOrigins])],
-    corsAdminOrigins: [...new Set([...splitOrigins(data.CORS_ADMIN_ORIGINS), ...extraOrigins])],
+    corsWebOrigins: lists.corsWebOrigins,
+    corsAdminOrigins: lists.corsAdminOrigins,
     corsMobileOrigins: splitOrigins(data.CORS_MOBILE_ORIGINS),
   };
   return cached;

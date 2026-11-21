@@ -31,7 +31,7 @@ paths:
       security: []
       responses:
         "200":
-          description: "{ enabled: boolean, codeLength?: 6 }"
+          description: "{ enabled: boolean, codeLength?: 4 }"
     post:
       tags: [web, mobile]
       summary: Start application development login
@@ -74,7 +74,7 @@ paths:
       security: []
       responses:
         "200":
-          description: "{ enabled: boolean, codeLength?: 6 }"
+          description: "{ enabled: boolean, codeLength?: 4 }"
     post:
       tags: [admin]
       summary: Start admin development login
@@ -104,7 +104,7 @@ paths:
         - mobile
         - web
       operationId: mobile_post_v1AuthOtpRequest
-      summary: Send a 6-digit SMS code to a number; `intent` is `signup` or `login`
+      summary: Send a 4-digit SMS code to a number; `intent` is `signup` or `login`
       description: "Domain: Authentication & Session"
       security: []
       x-endpointNumbers:
@@ -5738,7 +5738,7 @@ paths:
       tags:
         - admin
       operationId: admin_post_adminV1AuthOtpVerify
-      summary: Verify the 6-digit code, issue the session cookie
+      summary: Verify the 4-digit code, issue the session cookie
       description: "Domain: Auth & Session"
       security: []
       x-endpointNumbers:

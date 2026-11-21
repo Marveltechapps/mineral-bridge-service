@@ -17,7 +17,7 @@ export const ticketMachine = new StateMachine<TicketStatus>(
     agent_replied: ['open', 'waiting_on_user', 'escalated', 'resolved'],
     waiting_on_user: ['open', 'escalated', 'resolved'],
     escalated: ['agent_replied', 'resolved'],
-    resolved: ['open', 'closed'],
+    resolved: ['open', 'closed', 'agent_replied'],
     closed: [],
   },
   'support/invalid-transition',
@@ -108,7 +108,7 @@ export const supportService = {
     const t = await SupportTicketModel.findById(id).lean<ISupportTicket>();
     if (!t) throw notFound('support/ticket-not-found', 'Ticket not found');
     const to = input.status ?? 'agent_replied';
-    ticketMachine.assert(t.status, to);
+    if (t.status !== to) ticketMachine.assert(t.status, to);
     const updated = await SupportTicketModel.findOneAndUpdate(
       { _id: id, version: t.version },
       { $set: { status: to, ...(to === 'resolved' ? { resolvedAt: now() } : {}) }, $push: { messages: { _id: opaqueId('msg'), author: 'agent', authorName: input.authorName, body: input.body, attachmentIds: [], at: now() } }, $inc: { version: 1 } },

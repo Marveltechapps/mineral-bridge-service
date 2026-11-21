@@ -227,7 +227,7 @@ describe('customer login and registration verification', () => {
 
     const login = await requestMobileOtp({ phone, intent: 'login', channel: 'sms' });
     await expect(
-      verifyMobileOtp({ challengeId: login.challengeId, phone, code: '000000', device: {} }),
+      verifyMobileOtp({ challengeId: login.challengeId, phone, code: '0000', device: {} }),
     ).rejects.toMatchObject({ code: 'auth/otp-invalid' });
   });
 

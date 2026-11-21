@@ -23,6 +23,9 @@ export interface INotification {
   body: string;
   /** Deep link target: { type, id } resolved to a screen/route by each client mapper. */
   target?: { type: string; id: string };
+  orderId?: string;
+  source?: { kind: 'system' | 'staff'; staffId?: string };
+  channels?: Array<'push' | 'email' | 'sms' | 'whatsapp' | 'in_app'>;
   data?: Record<string, unknown>;
   readAt?: Date;
   createdAt: Date;
@@ -38,10 +41,22 @@ export const NotificationModel = defineModel<INotification>(
     title: { type: String, required: true },
     body: { type: String, default: '' },
     target: { type: Object },
+    orderId: String,
+    source: {
+      kind: { type: String, enum: ['system', 'staff'] },
+      staffId: String,
+    },
+    channels: [{ type: String, enum: ['push', 'email', 'sms', 'whatsapp', 'in_app'] }],
     data: { type: Object },
     readAt: Date,
   },
-  { indexes: [[{ userId: 1, createdAt: -1 }], [{ userId: 1, readAt: 1 }]] },
+  {
+    indexes: [
+      [{ userId: 1, createdAt: -1 }],
+      [{ userId: 1, readAt: 1 }],
+      [{ orderId: 1, createdAt: -1 }],
+    ],
+  },
 );
 
 export interface IDevice {
@@ -72,6 +87,7 @@ export interface INotificationPrefs {
   push: boolean;
   email: boolean;
   sms: boolean;
+  whatsapp: boolean;
   kinds: Record<string, boolean>;
 }
 
@@ -80,5 +96,6 @@ export const NotificationPrefsModel = defineModel<INotificationPrefs>('Notificat
   push: { type: Boolean, default: true },
   email: { type: Boolean, default: true },
   sms: { type: Boolean, default: false },
+  whatsapp: { type: Boolean, default: true },
   kinds: { type: Object, default: {} },
 });

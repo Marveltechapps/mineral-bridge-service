@@ -192,8 +192,17 @@ export async function resendSignInOtp(input: { challengeId: string; ip?: string 
 // Password reset (#6/#7)
 // ---------------------------------------------------------------------------------------------
 
+/** Prefer the dashboard the staff member is actually using, when that origin is allowed. */
+function dashboardBase(requested?: string): string {
+  const env = loadEnv();
+  const allowed = env.corsAdminOrigins.map((origin) => origin.replace(/\/$/, ''));
+  const candidate = requested?.trim().replace(/\/$/, '');
+  if (candidate && allowed.includes(candidate)) return candidate;
+  return (allowed[0] ?? env.PUBLIC_API_BASE_URL).replace(/\/$/, '');
+}
+
 /** Always completes silently — the caller answers `202` for known and unknown emails alike. */
-export async function requestPasswordReset(input: { email: string; ip?: string }): Promise<void> {
+export async function requestPasswordReset(input: { email: string; ip?: string; origin?: string }): Promise<void> {
   const staff = await findStaffByEmail(input.email);
   if (!staff || staff.disabled) return;
 
@@ -205,9 +214,7 @@ export async function requestPasswordReset(input: { email: string; ip?: string }
     requestedIp: input.ip,
   });
 
-  const env = loadEnv();
-  const base = env.corsAdminOrigins[0] ?? env.PUBLIC_API_BASE_URL;
-  const link = `${base.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
+  const link = `${dashboardBase(input.origin)}/reset-password?token=${encodeURIComponent(token)}`;
   try {
     await getEmailProvider().send({
       to: staff.email,

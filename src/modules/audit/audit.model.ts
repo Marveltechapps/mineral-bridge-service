@@ -13,7 +13,9 @@ const auditSchema = new Schema<any>(
     auditId: { type: String, required: true, unique: true },
     at: { type: Date, default: Date.now, index: true },
     actor: {
+      kind: { type: String, enum: ['staff', 'customer', 'system', 'partner'], default: 'staff' },
       staffId: { type: String, index: true },
+      userId: String,
       name: String,
       initials: String,
       role: String,
@@ -22,6 +24,8 @@ const auditSchema = new Schema<any>(
     category: { type: String, enum: AUDIT_CATEGORIES, required: true, index: true },
     action: { type: String, required: true },
     record: { type: refSchema, required: true },
+    /** Alias of `record` for v2 payloads. */
+    entity: refSchema,
     before: Schema.Types.Mixed,
     after: Schema.Types.Mixed,
     beforeText: { type: String, default: '—' },
@@ -33,6 +37,7 @@ const auditSchema = new Schema<any>(
   { versionKey: false },
 );
 auditSchema.index({ 'record.type': 1, 'record.id': 1, at: -1 });
+auditSchema.index({ 'actor.userId': 1, at: -1 }, { sparse: true });
 
 const BLOCKED = [
   'updateOne',
@@ -46,7 +51,7 @@ const BLOCKED = [
 ] as const;
 
 for (const op of BLOCKED) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   (auditSchema as any).pre(op, function () {
     throw new Error(`AuditLog is append-only: ${op} is not permitted`);
   });

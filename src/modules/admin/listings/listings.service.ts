@@ -10,7 +10,7 @@ import { loadRateIndex, lookupRate } from '../pricing/rates.service.js';
 
 export const LISTING_SORT: Record<string, string> = { id: 'listingId', mineral: 'mineral.name', price: 'askPrice.amountMinor', value: 'askPrice.amountMinor', views: 'views', status: 'status' };
 
-export function listingDto(l: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function listingDto(l: any) {  
   const listedValue = l.askPrice && l.quantityLeft ? priceTimesQuantity(l.askPrice, l.quantityLeft) : undefined;
   return {
     id: l.listingId,
@@ -31,7 +31,7 @@ export function listingDto(l: any) { // eslint-disable-line @typescript-eslint/n
   };
 }
 
-export async function listingDetailDto(l: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export async function listingDetailDto(l: any) {  
   const idx = await loadRateIndex();
   const rate = lookupRate(idx, l.mineral?.name ?? '', l.grade);
   const total = l.quantityTotal?.value ?? 0;
@@ -137,7 +137,7 @@ export async function createListingFromLot(input: CreateListingInput, session?: 
 /** Sum of buy-order value created from listings in a window (used by #38). */
 export async function soldFromListings(from: Date) {
   const rows = await Order.aggregate([
-    { $match: { side: 'buy', listingId: { $exists: true, $ne: null }, status: { $in: ['active', 'completed'] }, openedAt: { $gte: from } } },
+    { $match: { side: 'buy', listingId: { $exists: true, $ne: null }, status: { $in: ['active', 'completed'] }, openedAt: { $gte: from }, $or: [{ priceConfirmedAt: { $type: 'date' } }, { paymentStatus: 'released' }] } },
     { $group: { _id: '$value.currency', minor: { $sum: '$value.amountMinor' }, n: { $sum: 1 } } },
   ]);
   return rows;

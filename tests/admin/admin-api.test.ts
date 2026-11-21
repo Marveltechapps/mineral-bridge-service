@@ -47,7 +47,7 @@ describe('route registry', () => {
   it('registers endpoints #13–139 exactly once and the auth router for #1–12', () => {
     const reg = adminRouteRegistry();
     const numbered = reg.filter((r) => r.n !== null).map((r) => r.n as number).sort((a, b) => a - b);
-    expect(numbered).toEqual(Array.from({ length: 127 }, (_, i) => i + 13));
+    expect(numbered).toEqual([...Array.from({ length: 127 }, (_, i) => i + 13), 142]);
     const auth = reg.filter((r) => r.source === 'auth');
     const authKeys = auth.map((r) => `${r.method} ${r.path}`);
     expect(authKeys).toEqual(

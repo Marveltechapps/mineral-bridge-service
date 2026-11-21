@@ -6,7 +6,7 @@ export type PayoutAccountStatus = 'pending_verification' | 'verified' | 'failed'
 export interface IPayoutAccount {
   _id: string;
   userId: string;
-  kind: 'bank' | 'mobile_money' | 'btc';
+  kind: 'bank' | 'mobile_money' | 'btc' | 'upi';
   networkCode?: string; // bank code or mobile-money network
   bankName?: string;
   accountNumber: string;
@@ -17,6 +17,8 @@ export interface IPayoutAccount {
   status: PayoutAccountStatus;
   isDefault: boolean;
   fingerprint: string;
+  /** True until soft-deleted; enables a unique partial index on (userId, fingerprint). */
+  live: boolean;
   deletedAt?: Date;
   createdAt: Date;
 }
@@ -26,7 +28,7 @@ export const PayoutAccountModel = defineModel<IPayoutAccount>(
   {
     _id: pk('pac'),
     userId: { type: String, required: true },
-    kind: { type: String, enum: ['bank', 'mobile_money', 'btc'], default: 'bank' },
+    kind: { type: String, enum: ['bank', 'mobile_money', 'btc', 'upi'], default: 'bank' },
     networkCode: String,
     bankName: String,
     accountNumber: { type: String, required: true, select: false },
@@ -37,13 +39,13 @@ export const PayoutAccountModel = defineModel<IPayoutAccount>(
     status: { type: String, enum: ['pending_verification', 'verified', 'failed'], default: 'pending_verification' },
     isDefault: { type: Boolean, default: false },
     fingerprint: { type: String, required: true },
+    live: { type: Boolean, default: true },
     deletedAt: Date,
   },
   {
     indexes: [
-      // MongoDB partial indexes cannot express `deletedAt: {$exists:false}` (index creation fails), so uniqueness of live
-      // accounts is enforced by payouts.service (it checks before insert); this index only serves that lookup.
-      [{ userId: 1, fingerprint: 1 }],
+      // Unique among live accounts. Migration M14 backfills `live` before relying on uniqueness in production.
+      [{ userId: 1, fingerprint: 1 }, { unique: true, partialFilterExpression: { live: true } }],
       [{ userId: 1, isDefault: 1 }],
     ],
   },

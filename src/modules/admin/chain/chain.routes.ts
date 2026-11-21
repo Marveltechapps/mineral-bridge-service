@@ -48,7 +48,7 @@ export async function confirmAnchor(anchorId: string, input: { block: number; tx
   });
 }
 
-function anchorDto(a: Record<string, any>, nextBatchClosesAt: Date | null) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function anchorDto(a: Record<string, any>, nextBatchClosesAt: Date | null) {  
   return {
     id: a.anchorId,
     block: a.block ?? null,
@@ -118,7 +118,7 @@ export const chainRoutes: AdminRouteDef[] = [
         filter,
         sort: { at: -1, _id: -1 },
         paging: paging(req),
-        map: (docs: any[]) => // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: (docs: any[]) =>  
           docs.map((e) => ({ id: e.eventId, type: e.type, ref: { type: e.ref?.type, id: e.ref?.id, label: e.ref?.label ?? e.ref?.id }, description: e.description ?? '', txHash: e.txHash, at: iso(e.at), status: e.status })),
       }),
     );

@@ -56,6 +56,20 @@ export interface SmtpConfig {
 }
 
 /**
+ * Gmail only delivers mail whose From address is the authenticated mailbox.
+ * A different configured address is kept for other SMTP hosts.
+ */
+export function smtpFromAddress(config: SmtpConfig): string {
+  const user = config.user?.trim() ?? '';
+  const configured = config.from?.trim() || user;
+  const address = (configured.match(/<([^>]+)>/)?.[1] ?? configured).trim().toLowerCase();
+  const host = (config.host ?? '').toLowerCase();
+  const gmail = host.includes('gmail') || host.includes('googlemail') || host.endsWith('google.com');
+  if (gmail && user && address !== user.toLowerCase()) return `Mineral Bridge <${user}>`;
+  return configured;
+}
+
+/**
  * SMTP stub. `nodemailer` is intentionally not a hard dependency yet: it is loaded
  * dynamically, and the provider throws `503 email/provider-unavailable` when either the
  * SMTP settings or the module are missing.
@@ -95,7 +109,11 @@ export class SmtpEmailProvider implements EmailProvider {
       host,
       port,
       secure: port === 465,
+      requireTLS: port === 587,
       auth: user && pass ? { user, pass } : undefined,
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 20_000,
     });
     return this.transport;
   }
@@ -104,7 +122,7 @@ export class SmtpEmailProvider implements EmailProvider {
     const transport = await this.getTransport();
     try {
       const info = (await transport.sendMail({
-        from: this.config.from,
+        from: smtpFromAddress(this.config),
         to: message.to,
         subject: message.subject,
         text: message.text,

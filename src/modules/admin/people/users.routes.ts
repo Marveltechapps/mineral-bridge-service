@@ -46,13 +46,14 @@ async function listUsers(req: import('express').Request, p: { skip: number; page
 
 const piiAllowed = (req: import('express').Request) => hasAccess(staffActor(req).permissions, 'users', 'edit');
 
-function tierRequestDto(t: Record<string, any>, users: Map<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function tierRequestDto(t: Record<string, any>, users: Map<string, any>) {  
   return { id: t.requestId, user: partyFrom(users, t.userId), from: t.from, to: t.to, reason: t.reason ?? '', openedAt: iso(t.openedAt), status: t.status };
 }
 
 async function lifetimeValue(userId: string) {
-  const rows = await Order.aggregate([{ $match: { counterpartyId: userId, status: { $in: ['active', 'completed'] }, 'value.currency': 'USD' } }, { $group: { _id: null, minor: { $sum: '$value.amountMinor' } } }]);
-  return outMoneyOrZero({ amountMinor: rows[0]?.minor ?? 0, currency: 'USD', scale: 2 });
+  const rows = await Order.aggregate([{ $match: { counterpartyId: userId, status: { $in: ['active', 'completed'] }, 'value.currency': 'USD', $or: [{ priceConfirmedAt: { $type: 'date' } }, { paymentStatus: 'released' }] } }, { $group: { _id: null, minor: { $sum: '$value.amountMinor' } } }]);
+  if (!rows[0]) return null;
+  return outMoneyOrZero({ amountMinor: rows[0].minor ?? 0, currency: 'USD', scale: 2 });
 }
 
 export const userRoutes: AdminRouteDef[] = [
@@ -88,7 +89,7 @@ export const userRoutes: AdminRouteDef[] = [
         filter: { counterpartyId: u.userId, status: { $ne: 'draft' } },
         sort: { openedAt: -1, _id: 1 },
         paging: paging(req),
-        map: (docs: any[]) => mapOrderSummaries(docs), // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: (docs: any[]) => mapOrderSummaries(docs),  
         extraMeta: async () => ({ lifetimeValue: await lifetimeValue(u.userId) }),
       }),
     );
@@ -101,7 +102,7 @@ export const userRoutes: AdminRouteDef[] = [
         filter: { userId: u.userId, isDraft: { $ne: true } },
         sort: { openedAt: -1, _id: 1 },
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const [users, staff] = await Promise.all([loadUserMap([u.userId]), loadStaffMap(docs.map((d) => d.ownerId))]);
           return docs.map((d) => ticketDto(d, users, staff));
         },
@@ -116,7 +117,7 @@ export const userRoutes: AdminRouteDef[] = [
         filter: { userId: u.userId },
         sort: { expiresOn: 1, _id: 1 },
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const holders = await loadUserMap([u.userId]);
           return docs.map((d) => trackedDocumentDto(d, holders));
         },
@@ -168,7 +169,7 @@ export const userRoutes: AdminRouteDef[] = [
         filter: { status },
         sort: { openedAt: status === 'pending' ? 1 : -1, _id: 1 },
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const users = await loadUserMap(docs.map((d) => d.userId));
           return docs.map((d) => tierRequestDto(d, users));
         },

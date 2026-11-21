@@ -13,7 +13,7 @@ import { auditActor } from '../shared/staff-context.js';
 const GROUP_LABEL: Record<string, string> = { bonded_carrier: 'Bonded carriers', inspection_hub: 'Inspection hubs', lab_assay: 'Assay labs' };
 const ORDER_FIELD: Record<string, string> = { bonded_carrier: 'carrierId', inspection_hub: 'hubId', lab_assay: 'labId' };
 
-async function usage(partners: Array<Record<string, any>>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+async function usage(partners: Array<Record<string, any>>) {  
   const total = new Map<string, number>();
   const active = new Map<string, number>();
   await Promise.all(
@@ -30,7 +30,7 @@ async function usage(partners: Array<Record<string, any>>) { // eslint-disable-l
   return { total, active };
 }
 
-function partnerDto(p: Record<string, any>, total: number, active: number) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function partnerDto(p: Record<string, any>, total: number, active: number) {  
   const unit = p.type === 'lab_assay' ? 'assays' : 'orders';
   return {
     id: p.partnerId,

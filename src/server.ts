@@ -5,18 +5,22 @@ import { loadEnv } from './config/env.js';
 import { logger } from './config/logger.js';
 import { assertProductionConfig } from './config/production-guards.js';
 import { startAuctionScheduler } from './modules/admin/auctions/auctions.service.js';
+import { startOutboxWorker, stopOutboxWorker } from './modules/outbox/outbox.worker.js';
 import { attachWebSocketServer } from './realtime/ws-server.js';
+import { startRedisRealtimeBridge, stopRedisRealtimeBridge } from './realtime/redis-bridge.js';
 
 async function main(): Promise<void> {
   const env = loadEnv();
   assertProductionConfig(env);
   await connectDatabase();
+  await startRedisRealtimeBridge();
 
   const app = createApp();
   const server = http.createServer(app);
   server.keepAliveTimeout = 65_000; // behind a load balancer with a 60 s idle timeout
   const wss = attachWebSocketServer(server);
   const stopScheduler = startAuctionScheduler();
+  startOutboxWorker(env.NODE_ENV === 'test' ? 60_000 : 5_000);
 
   await new Promise<void>((resolve) => server.listen(env.PORT, env.HOST, resolve));
   logger.info({ port: env.PORT, host: env.HOST, env: env.NODE_ENV }, 'Mineral Bridge API listening');
@@ -33,6 +37,8 @@ async function main(): Promise<void> {
     force.unref();
     try {
       stopScheduler();
+      stopOutboxWorker();
+      await stopRedisRealtimeBridge();
       for (const client of wss.clients) client.close(1001, 'server shutting down');
       wss.close();
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));

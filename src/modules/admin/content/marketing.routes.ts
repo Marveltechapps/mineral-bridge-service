@@ -12,7 +12,7 @@ import { auditActor } from '../shared/staff-context.js';
 
 const KIND_OF: Record<string, string> = { homepage_hero: 'hero', homepage_secondary: 'secondary', in_app_promo: 'promo_card', category_miners: 'category', category_buyers: 'category', email_strip: 'email' };
 
-const bannerDto = (b: Record<string, any>) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+const bannerDto = (b: Record<string, any>) => ({  
   id: b.bannerId,
   title: b.title,
   placement: b.placement,
@@ -60,7 +60,7 @@ export const marketingRoutes: AdminRouteDef[] = [
         filter: and(placement && { placement }, active !== undefined && { active }, re && { $or: [{ title: re }, { linkTarget: re }, { bannerId: re }, { placement: { $in: labelHits } }] }, { status: { $ne: 'draft' } }),
         sort: { active: -1, createdAt: -1, _id: 1 },
         paging: paging(req),
-        map: (docs: any[]) => docs.map(bannerDto), // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: (docs: any[]) => docs.map(bannerDto),  
       }),
     );
   }),

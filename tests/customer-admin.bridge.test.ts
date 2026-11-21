@@ -8,6 +8,7 @@ import { ListingModel } from '../src/models/web-trade.model.js';
 import { Order } from '../src/models/trading.models.js';
 import { User } from '../src/models/people.models.js';
 import { applyAdminKycToCustomer, projectCustomerOrder, reflectAdminOrderStage } from '../src/integration/customer-admin.bridge.js';
+import { confirmAgreedPrice } from '../src/modules/admin/orders/confirm-price.js';
 import { toWebKycRecord } from '../src/modules/kyc/kyc.mappers.js';
 import { addDocument, getKycView, setDraftIdType, submitWeb } from '../src/modules/kyc/kyc.service.js';
 import { buildApp, clearDb, createUser, MOBILE, seedProduct, startDb, stopDb, WEB } from './helpers/harness.js';
@@ -55,8 +56,9 @@ describe('customer order is visible to the admin collection', () => {
     expect(adminOrders[0]?.status).toBe('active');
     expect(adminOrders[0]?.customerStatus).toBe('pending_review');
     expect(adminOrders[0]?.settlementMethod).toBe('Escrow');
-    expect(adminOrders[0]?.lockedRate).toMatchObject({ amountMinor: 650, per: 'g', scale: 2 });
-    expect(adminOrders[0]?.value?.amountMinor).toBeGreaterThan(0);
+    expect(adminOrders[0]?.lockedRate).toBeUndefined();
+    expect(adminOrders[0]?.value).toBeUndefined();
+    expect(adminOrders[0]?.priceConfirmedAt).toBeUndefined();
 
     await Order.updateOne({ orderId: adminOrders[0]?.orderId }, { $set: { stage: 'agent_visit' } });
     const customer = await OrderModel.findOne({ reference: adminOrders[0]?.orderId }).lean();
@@ -64,6 +66,24 @@ describe('customer order is visible to the admin collection', () => {
     const kept = await Order.findOne({ orderId: adminOrders[0]?.orderId }).lean();
     expect(kept?.stage).toBe('agent_visit');
     expect(kept?.settlementMethod).toBe('Escrow');
+    expect(kept?.value).toBeUndefined();
+
+    await confirmAgreedPrice({
+      orderId: adminOrders[0]!.orderId,
+      unitPrice: { amount: 70, currency: 'USD', per: 'g' },
+      actor: { staffId: 'STF-TEST', name: 'Desk' },
+    });
+    const priced = await Order.findOne({ orderId: adminOrders[0]?.orderId }).lean();
+    expect(priced?.priceConfirmedAt).toBeInstanceOf(Date);
+    expect(priced?.lockedRate).toMatchObject({ per: 'g' });
+    expect(priced?.value?.amountMinor).toBe(700_000);
+    const customerPriced = await OrderModel.findOne({ reference: adminOrders[0]?.orderId }).lean();
+    expect(customerPriced?.priceConfirmed).toBe(true);
+    expect(customerPriced?.total.amountMinor).toBe(700_000);
+    await projectCustomerOrder(customerPriced!);
+    const stillPriced = await Order.findOne({ orderId: adminOrders[0]?.orderId }).lean();
+    expect(stillPriced?.value?.amountMinor).toBe(700_000);
+    expect(stillPriced?.lockedRate).toMatchObject({ amountMinor: 7000, per: 'g' });
   });
 });
 

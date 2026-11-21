@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FakeEmailProvider, ResendEmailProvider, SmtpEmailProvider } from './email.provider.js';
+import { FakeEmailProvider, ResendEmailProvider, SmtpEmailProvider, smtpFromAddress } from './email.provider.js';
 
 describe('FakeEmailProvider', () => {
   it('captures messages in the outbox', async () => {
@@ -11,6 +11,28 @@ describe('FakeEmailProvider', () => {
     expect(p.lastTo('b@x.com')).toBeUndefined();
     p.clear();
     expect(p.outbox).toHaveLength(0);
+  });
+});
+
+describe('smtpFromAddress', () => {
+  it('uses the authenticated Gmail mailbox when the configured From address is different', () => {
+    expect(
+      smtpFromAddress({
+        host: 'smtp.gmail.com',
+        user: 'desk@gmail.com',
+        from: 'support@mineralbridge.com',
+      }),
+    ).toBe('Mineral Bridge <desk@gmail.com>');
+  });
+
+  it('keeps a matching From address', () => {
+    expect(
+      smtpFromAddress({
+        host: 'smtp.gmail.com',
+        user: 'desk@gmail.com',
+        from: 'Mineral Bridge <desk@gmail.com>',
+      }),
+    ).toBe('Mineral Bridge <desk@gmail.com>');
   });
 });
 

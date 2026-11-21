@@ -1,3 +1,4 @@
+import type { ActorRef, QtyDoc, UnitPriceDoc } from './schema-primitives.js';
 import { defineModel, pk, SubDocId } from './_shared.js';
 
 export interface ICategory {
@@ -142,30 +143,69 @@ export interface IProduct {
   subcategorySlug?: string;
   productFormSlug?: string;
   mineralCode: string;
+  form?: string;
   purity?: string;
   grade?: string;
-  origin: { country: string; region?: string; site?: string };
+  lab?: { name?: string; certificateNo?: string; partnerId?: string };
+  origin: { country: string; region?: string; site?: string; display?: string };
   /** Owning customer, when the lot is listed by a user; platform inventory has none. */
   sellerId?: string;
   seller: { name: string; tier: 'cooperative' | 'registered' | 'individual' | 'mineral_bridge'; verified: boolean };
   status: ProductStatus;
+  /** Authoritative quantity (base = mg or pieces). */
+  qty?: QtyDoc;
   availableGrams: number;
   minOrderGrams: number;
   stepGrams: number;
   currency: string;
   unitPriceMinorE4PerGram: number;
+  pricing?: { reference?: UnitPriceDoc };
   assured: boolean;
   verified: boolean;
+  imageFileIds?: string[];
   imageUrl?: string;
   imageName?: string;
   gradientFrom?: string;
   gradientTo?: string;
   description?: string;
   attributes: Record<string, string | number | boolean>;
-  media: { _id: string; kind: 'image' | 'video' | 'document'; url: string; thumbnailUrl?: string; sort: number }[];
+  media: {
+    _id: string;
+    kind: 'image' | 'video' | 'document';
+    url: string;
+    thumbnailUrl?: string;
+    sort: number;
+    /** Stored upload behind `url`, when the image was added from the console. */
+    fileId?: string;
+    caption?: string;
+    name?: string;
+    bytes?: number;
+    addedAt?: Date;
+    addedBy?: string;
+  }[];
   provenance: { _id: string; stage: string; title: string; detail?: string; at: Date; location?: string; hash?: string }[];
-  documents: { _id: string; name: string; kind: string; fileId?: string; url?: string; bytes?: number; contentType?: string }[];
+  documents: {
+    _id: string;
+    name: string;
+    kind: string;
+    fileId?: string;
+    url?: string;
+    bytes?: number;
+    contentType?: string;
+    /** Console label, e.g. "Kimberley Process certificate", when `kind` is not a public type. */
+    label?: string;
+    /** False keeps the document admin-only. Missing means visible to buyers. */
+    visible?: boolean;
+    version?: number;
+    addedAt?: Date;
+    addedBy?: string;
+    history?: { version: number; name: string; fileId?: string; bytes?: number; at?: Date; by?: string }[];
+  }[];
   passportId?: string;
+  featured?: boolean;
+  createdBy?: ActorRef;
+  updatedBy?: ActorRef;
+  version?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -181,9 +221,11 @@ export const ProductModel = defineModel<IProduct>(
     subcategorySlug: { type: String, index: true },
     productFormSlug: { type: String, index: true },
     mineralCode: { type: String, required: true },
+    form: { type: String, maxlength: 60 },
     purity: String,
     grade: String,
-    origin: { country: { type: String, required: true }, region: String, site: String },
+    lab: { name: String, certificateNo: String, partnerId: String },
+    origin: { country: { type: String, required: true }, region: String, site: String, display: String },
     sellerId: String,
     seller: {
       name: { type: String, default: 'Mineral Bridge' },
@@ -191,13 +233,16 @@ export const ProductModel = defineModel<IProduct>(
       verified: { type: Boolean, default: true },
     },
     status: { type: String, enum: ['draft', 'active', 'sold', 'withdrawn'], default: 'active' },
+    qty: { type: Object },
     availableGrams: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
-    minOrderGrams: { type: Number, default: 50 },
+    minOrderGrams: { type: Number, default: 0 },
     stepGrams: { type: Number, default: 50 },
     currency: { type: String, default: 'USD' },
     unitPriceMinorE4PerGram: { type: Number, required: true, min: 0 },
+    pricing: { reference: { type: Object } },
     assured: { type: Boolean, default: false },
     verified: { type: Boolean, default: true },
+    imageFileIds: { type: [String], default: [] },
     imageUrl: String,
     imageName: String,
     gradientFrom: String,
@@ -211,6 +256,12 @@ export const ProductModel = defineModel<IProduct>(
         url: { type: String, required: true },
         thumbnailUrl: String,
         sort: { type: Number, default: 0 },
+        fileId: String,
+        caption: String,
+        name: String,
+        bytes: Number,
+        addedAt: Date,
+        addedBy: String,
       },
     ],
     provenance: [
@@ -233,9 +284,19 @@ export const ProductModel = defineModel<IProduct>(
         url: String,
         bytes: Number,
         contentType: String,
+        label: String,
+        visible: Boolean,
+        version: Number,
+        addedAt: Date,
+        addedBy: String,
+        history: { type: [Object], default: undefined },
       },
     ],
     passportId: String,
+    featured: { type: Boolean, default: false },
+    createdBy: { type: Object },
+    updatedBy: { type: Object },
+    version: { type: Number, default: 0 },
   },
   {
     indexes: [
@@ -245,6 +306,8 @@ export const ProductModel = defineModel<IProduct>(
       [{ productFormSlug: 1, status: 1 }],
       [{ categorySlug: 1, subcategorySlug: 1, typeSlug: 1, productFormSlug: 1, status: 1 }],
       [{ name: 'text', description: 'text', mineralCode: 'text' }],
+      [{ status: 1, typeSlug: 1, 'qty.availableBase': -1 }],
+      [{ 'lab.certificateNo': 1 }, { sparse: true }],
     ],
     schema: { minimize: false },
   },

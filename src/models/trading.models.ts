@@ -32,6 +32,9 @@ const orderSchema = new Schema<any>(
     agentId: { type: String, index: true },
     value: moneySchema,
     lockedRate: unitPriceSchema,
+    /** Set only when the desk types the rate agreed with the customer. Catalog totals are not a confirmation. */
+    priceConfirmedAt: Date,
+    priceConfirmedBy: String,
     assayStatus: { type: String, default: 'pending' },
     paymentStatus: { type: String, enum: ['due_on_approval', 'released'], default: 'due_on_approval' },
     releasedAmount: moneySchema,
@@ -183,11 +186,25 @@ const lotSchema = new Schema<any>(
     listingId: String,
     auctionId: String,
     passportId: String,
+    /** Link to canonical customer product (`cust_products`). */
+    productId: String,
+    /** Authoritative quantity in product base units (mg / pieces). */
+    qty: {
+      measure: { type: String, enum: ['mass', 'count'] },
+      unit: { type: String, enum: ['g', 'kg', 't', 'oz', 'ct', 'pc', 'bar'] },
+      availableBase: Number,
+      reservedBase: Number,
+      minBase: Number,
+      stepBase: Number,
+      base: Number,
+    },
     ...timestampFields,
   },
   opts,
 );
 lotSchema.index({ status: 1, heldSince: 1 });
+lotSchema.index({ productId: 1 });
+lotSchema.index({ sourceOrderId: 1 }, { sparse: true });
 export const VaultLot = defineModel('VaultLot', lotSchema, 'vault_lots');
 
 /* ───────── Catalog listings ───────── */

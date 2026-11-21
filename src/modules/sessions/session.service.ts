@@ -410,7 +410,8 @@ export function verifyCsrfToken(session: Pick<StaffSessionShape, 'csrfTokenHash'
   return presented.length > 0 && presented.length < 256 && safeEqual(hashToken(presented), session.csrfTokenHash);
 }
 
-function nextIdleExpiry(now: Date, absoluteExpiresAt: Date): Date {
+/** Idle deadline from `now`, never later than the absolute session cap. */
+export function nextIdleExpiry(now: Date, absoluteExpiresAt: Date): Date {
   const idle = new Date(now.getTime() + loadEnv().ADMIN_IDLE_TIMEOUT_SECONDS * 1000);
   return idle.getTime() < absoluteExpiresAt.getTime() ? idle : absoluteExpiresAt;
 }
@@ -550,11 +551,38 @@ export async function revokeAllStaffSessions(
   return res.modifiedCount;
 }
 
-export async function touchStaffSession(id: string, now = new Date()): Promise<void> {
+/**
+ * Records activity and slides the idle deadline up to the absolute cap.
+ * Throttled to {@link STAFF_TOUCH_INTERVAL_MS} so a busy page does not write every call.
+ * A desk that keeps making requests stays signed in; a quiet one still expires.
+ */
+export async function touchStaffSession(id: string, absoluteExpiresAt: Date, now = new Date()): Promise<void> {
   await StaffSessionModel.updateOne(
-    { _id: id, lastUsedAt: { $lt: new Date(now.getTime() - STAFF_TOUCH_INTERVAL_MS) } },
-    { $set: { lastUsedAt: now } },
+    {
+      _id: id,
+      revokedAt: null,
+      lastUsedAt: { $lt: new Date(now.getTime() - STAFF_TOUCH_INTERVAL_MS) },
+    },
+    { $set: { lastUsedAt: now, idleExpiresAt: nextIdleExpiry(now, absoluteExpiresAt) } },
   );
+}
+
+/**
+ * CSRF is an HMAC of the session cookie. After the signing secret changes, the stored
+ * hash still matches the token the browser already has, but a re-derived token would not.
+ * Move the stored hash onto the current secret and return the token the client should keep.
+ */
+export async function syncStaffCsrf(session: StaffSessionRecord, sessionToken: string): Promise<string> {
+  const csrfToken = deriveCsrfToken(sessionToken);
+  const csrfTokenHash = hashToken(csrfToken);
+  if (csrfTokenHash !== session.csrfTokenHash) {
+    const updated = await StaffSessionModel.updateOne(
+      { _id: session.id, revokedAt: null },
+      { $set: { csrfTokenHash } },
+    );
+    if (updated.matchedCount > 0) session.csrfTokenHash = csrfTokenHash;
+  }
+  return csrfToken;
 }
 
 export async function listActiveStaffSessions(staffId: string, now = new Date()): Promise<StaffSessionRecord[]> {

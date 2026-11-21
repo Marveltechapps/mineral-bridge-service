@@ -1,9 +1,29 @@
-import type { CorsOptions } from 'cors';
+import type { CorsOptions, CorsOptionsDelegate, CorsRequest } from 'cors';
 import { loadEnv } from './env.js';
 
-export function buildCorsOptions(): CorsOptions {
+/** Staff-only API prefixes. Customer (web/mobile) browser origins get no CORS grant here. */
+export function isAdminPath(path: string): boolean {
+  return path.startsWith('/v2/admin') || path.startsWith('/admin/');
+}
+
+/**
+ * Per-request CORS: admin routes accept only admin origins; customer routes accept web, admin and mobile origins.
+ * Falls back to the combined list when no admin origins are configured, so a minimal dev setup keeps working.
+ */
+export function buildCorsDelegate(): CorsOptionsDelegate<CorsRequest> {
   const env = loadEnv();
-  const allowed = new Set([
+  const base = buildCorsOptions();
+  const adminOnly = buildCorsOptions(new Set(env.corsAdminOrigins));
+  return (req, cb) => {
+    const r = req as CorsRequest & { path?: string; url?: string };
+    const path = r.path ?? (r.url ?? '').split('?')[0] ?? '';
+    cb(null, isAdminPath(path) && env.corsAdminOrigins.length > 0 ? adminOnly : base);
+  };
+}
+
+export function buildCorsOptions(only?: Set<string>): CorsOptions {
+  const env = loadEnv();
+  const allowed = only ?? new Set([
     ...env.corsWebOrigins,
     ...env.corsAdminOrigins,
     ...env.corsMobileOrigins,

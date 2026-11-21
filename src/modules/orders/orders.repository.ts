@@ -53,18 +53,23 @@ export const ordersRepository = {
 
   /** Atomically reserve stock; false if not enough remains. Marks the product `sold` at zero. */
   async reserveStock(productId: string, grams: number): Promise<boolean> {
+    // One atomic write: decrement and flip to `sold` at zero. A separate second write left a window where a
+    // depleted lot read as "active with 0 g" (the no-availability-figure case) and a concurrent order skipped reservation.
     const res = await ProductModel.updateOne(
       { _id: productId, status: 'active', availableGrams: { $gte: grams } },
-      { $inc: { availableGrams: -grams } },
+      [
+        { $set: { availableGrams: { $subtract: ['$availableGrams', grams] } } },
+        { $set: { status: { $cond: [{ $lte: ['$availableGrams', 0] }, 'sold', '$status'] } } },
+      ],
     );
-    if (res.modifiedCount !== 1) return false;
-    await ProductModel.updateOne({ _id: productId, availableGrams: 0, status: 'active' }, { $set: { status: 'sold' } });
-    return true;
+    return res.modifiedCount === 1;
   },
 
   async restoreStock(productId: string, grams: number): Promise<void> {
-    await ProductModel.updateOne({ _id: productId }, { $inc: { availableGrams: grams } });
-    await ProductModel.updateOne({ _id: productId, status: 'sold', availableGrams: { $gt: 0 } }, { $set: { status: 'active' } });
+    await ProductModel.updateOne({ _id: productId }, [
+      { $set: { availableGrams: { $add: ['$availableGrams', grams] } } },
+      { $set: { status: { $cond: [{ $and: [{ $eq: ['$status', 'sold'] }, { $gt: ['$availableGrams', 0] }] }, 'active', '$status'] } } },
+    ]);
   },
 
   findCart: (userId: string) => CartModel.findOne({ userId }).lean<ICart>(),

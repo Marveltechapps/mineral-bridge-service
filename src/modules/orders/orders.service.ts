@@ -106,9 +106,8 @@ async function loadSellableProduct(productId: string, grams: number, client: Api
   const p = await repo.findProduct(productId);
   if (!p || p.status !== 'active') throw unavailable(client);
   const unit = sellingUnit(p);
-  if (grams < p.minOrderGrams) {
-    const label = quantityLabel(p.minOrderGrams, unit);
-    throw unprocessable(`Minimum order is ${label}`, { quantity: `Minimum ${label}` }, 'order/below-minimum');
+  if (!(grams > 0)) {
+    throw unprocessable('Enter a quantity greater than zero', { quantity: 'Enter a quantity greater than zero' }, 'order/invalid-quantity');
   }
   // A catalog row inserted without an availability figure stays at 0 g. That is not a sold-out lot.
   if (p.availableGrams > 0 && grams > p.availableGrams) throw insufficient(client, p.availableGrams, unit);
@@ -209,7 +208,7 @@ export const ordersService = {
       withinAvailable: !tracked || input.grams <= p.availableGrams,
       minOrderGrams: p.minOrderGrams,
       unit: sellingUnit(p),
-      meetsMinimum: input.grams >= p.minOrderGrams,
+      meetsMinimum: input.grams > 0,
       feeBps: FEES.webBuyPlatformBps,
     };
   },
@@ -281,11 +280,12 @@ export const ordersService = {
       for (const l of lines) {
         if (!l.productId) continue;
         const stocked = await repo.findProduct(l.productId);
-        if (stocked && stocked.availableGrams === 0) continue;
+        // Only an active row with no availability figure skips reservation; a depleted lot is already `sold`.
+        if (stocked && stocked.status === 'active' && stocked.availableGrams === 0) continue;
         const ok = await repo.reserveStock(l.productId, l.grams);
         if (!ok) {
           const p = await repo.findProduct(l.productId);
-          throw p && p.status === 'active' ? insufficient(client, p.availableGrams) : unavailable(client);
+          throw p && p.status === 'active' ? insufficient(client, p.availableGrams, sellingUnit(p)) : unavailable(client);
         }
         reserved.push({ productId: l.productId, grams: l.grams });
       }
@@ -368,6 +368,7 @@ export const ordersService = {
         platformFee: money(0),
         surcharge: money(0),
         total: money(a.amountMinor),
+        priceConfirmed: true,
         paymentMethod: 'escrow',
         paymentTaken: false,
         settlement: { method: 'escrow', status: 'not_funded' },

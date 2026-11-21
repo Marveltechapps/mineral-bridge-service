@@ -9,36 +9,58 @@ export interface IChainAnchor {
 }
 
 export type ContractStatus = 'draft' | 'signed' | 'countersigned' | 'cancelled';
+export type ContractKind = 'order' | 'negotiation';
 export type LcType = 'Irrevocable' | 'Confirmed' | 'Standby';
 export type Tenor = 'At sight' | '30 days' | '60 days' | '90 days';
+
+export interface IContractSignatureParty {
+  signatory?: string;
+  signedAt?: Date;
+  userId?: string;
+  ip?: string;
+  userAgent?: string;
+  device?: string;
+  nameTyped?: string;
+  readConfirmed?: boolean;
+}
 
 export interface IContract {
   _id: string;
   reference: string;
+  number?: string;
+  kind: ContractKind;
   status: ContractStatus;
-  negotiationId: string;
-  acceptedOfferId: string;
+  orderId?: string;
+  negotiationId?: string;
+  acceptedOfferId?: string;
+  templateId?: string;
+  templateVersion?: number;
+  documentHash?: string;
   lcId?: string;
   buyerId: string;
   sellerId: string;
   signatories: { buyer?: string; seller?: string };
   terms: {
-    lotDescription: string;
-    incoterm: string;
-    namedPort: string;
-    unitPrice: MoneyDoc;
-    quantity: number;
-    unit: string;
-    total: MoneyDoc;
-    shipmentFrom: string;
-    shipmentTo: string;
-    lcType: LcType;
-    tenor: Tenor;
-    issuingBankId: string;
-    issuingBankName: string;
-    presentationPeriodDays: number;
+    lotDescription?: string;
+    incoterm?: string;
+    namedPort?: string;
+    unitPrice?: MoneyDoc;
+    quantity?: number;
+    unit?: string;
+    total?: MoneyDoc;
+    shipmentFrom?: string;
+    shipmentTo?: string;
+    lcType?: LcType;
+    tenor?: Tenor;
+    issuingBankId?: string;
+    issuingBankName?: string;
+    presentationPeriodDays?: number;
   };
-  signatures: { buyer?: { signatory: string; signedAt: Date }; seller?: { signatory: string; signedAt: Date } };
+  signatures: {
+    buyer?: IContractSignatureParty;
+    seller?: IContractSignatureParty;
+    platform?: { staffId: string; name: string; title?: string; signedAt: Date };
+  };
   termsHash?: string;
   liveKey?: string;
   anchor?: IChainAnchor;
@@ -52,9 +74,15 @@ export const ContractModel = defineModel<IContract>(
   {
     _id: pk('ctr'),
     reference: { type: String, required: true, unique: true },
+    number: String,
+    kind: { type: String, enum: ['order', 'negotiation'], default: 'negotiation' },
     status: { type: String, enum: ['draft', 'signed', 'countersigned', 'cancelled'], default: 'draft' },
-    negotiationId: { type: String, required: true },
-    acceptedOfferId: { type: String, required: true },
+    orderId: String,
+    negotiationId: String,
+    acceptedOfferId: String,
+    templateId: String,
+    templateVersion: Number,
+    documentHash: String,
     lcId: String,
     buyerId: { type: String, required: true },
     sellerId: { type: String, required: true },
@@ -72,6 +100,7 @@ export const ContractModel = defineModel<IContract>(
       [{ negotiationId: 1 }],
       [{ buyerId: 1 }],
       [{ sellerId: 1 }],
+      [{ orderId: 1 }, { unique: true, sparse: true }],
     ],
     schema: { minimize: false },
   },
@@ -174,27 +203,48 @@ export const LetterOfCreditModel = defineModel<ILetterOfCredit>(
   { indexes: [[{ applicantId: 1 }], [{ beneficiaryId: 1 }], [{ status: 1 }]], schema: { minimize: false } },
 );
 
-export type ShipmentStatus = 'booked' | 'loaded' | 'in_transit' | 'discharged' | 'delivered' | 'delayed';
+export type ShipmentStatus =
+  | 'booked'
+  | 'loaded'
+  | 'in_transit'
+  | 'discharged'
+  | 'delivered'
+  | 'delayed'
+  | 'pickup_scheduled'
+  | 'picked_up'
+  | 'received_at_vault';
 
 export interface IShipment {
   _id: string;
   reference: string;
   ownerIds: string[];
-  lotDescription: string;
-  billOfLading: string;
+  lotDescription?: string;
+  billOfLading?: string;
   lcId?: string;
   orderId?: string;
   contractId?: string;
-  route: { fromPort: string; fromCountry: string; toPort: string; toCountry: string };
+  direction?: 'vault_to_buyer' | 'seller_to_vault';
+  partnerId?: string;
+  mode?: Array<'road' | 'rail' | 'sea' | 'air'>;
+  scope?: 'domestic' | 'cross_border';
+  contact?: string;
+  pickup?: { scheduledAt?: Date; address?: string };
+  vehicle?: Record<string, unknown>;
+  driver?: Record<string, unknown>;
+  seals?: string[];
+  currentLocation?: string;
+  pod?: { ref?: string; receivedBy?: string; photoFileIds?: string[]; at?: Date };
+  receivedAtVault?: { weight?: { unit: string; base: number }; at?: Date };
+  route?: { fromPort?: string; fromCountry?: string; toPort?: string; toCountry?: string };
   departedAt?: Date;
-  estimatedArrival: Date;
+  estimatedArrival?: Date;
   actualArrival?: Date;
   progressPercent: number;
-  vessel: { name: string; voyage: string; imo?: string };
-  container: { number: string; sealNumber: string; type: string };
-  insuredValue: MoneyDoc;
-  insuranceRate: number;
-  incoterm: string;
+  vessel?: { name?: string; voyage?: string; imo?: string };
+  container?: { number?: string; sealNumber?: string; type?: string };
+  insuredValue?: MoneyDoc;
+  insuranceRate?: number;
+  incoterm?: string;
   status: ShipmentStatus;
   events: { _id: string; index: number; title: string; actor?: string; location?: string; occurredAt?: Date; projected: boolean; anchor?: IChainAnchor }[];
   documents: { _id: string; kind: string; name: string; fileId?: string }[];
@@ -212,9 +262,21 @@ export const ShipmentModel = defineModel<IShipment>(
     lcId: String,
     orderId: String,
     contractId: String,
-    route: { type: Object, required: true },
+    direction: { type: String, enum: ['vault_to_buyer', 'seller_to_vault'] },
+    partnerId: String,
+    mode: [{ type: String, enum: ['road', 'rail', 'sea', 'air'] }],
+    scope: { type: String, enum: ['domestic', 'cross_border'] },
+    contact: String,
+    pickup: { type: Object },
+    vehicle: { type: Object },
+    driver: { type: Object },
+    seals: [String],
+    currentLocation: String,
+    pod: { type: Object },
+    receivedAtVault: { type: Object },
+    route: { type: Object },
     departedAt: Date,
-    estimatedArrival: { type: Date, required: true },
+    estimatedArrival: Date,
     actualArrival: Date,
     progressPercent: { type: Number, default: 0 },
     vessel: { type: Object },
@@ -222,7 +284,21 @@ export const ShipmentModel = defineModel<IShipment>(
     insuredValue: { type: Object },
     insuranceRate: { type: Number, default: 1.1 },
     incoterm: String,
-    status: { type: String, enum: ['booked', 'loaded', 'in_transit', 'discharged', 'delivered', 'delayed'], default: 'booked' },
+    status: {
+      type: String,
+      enum: [
+        'booked',
+        'loaded',
+        'in_transit',
+        'discharged',
+        'delivered',
+        'delayed',
+        'pickup_scheduled',
+        'picked_up',
+        'received_at_vault',
+      ],
+      default: 'booked',
+    },
     events: [
       {
         _id: SubDocId('sev'),
@@ -237,7 +313,15 @@ export const ShipmentModel = defineModel<IShipment>(
     ],
     documents: [{ _id: SubDocId('doc'), kind: String, name: String, fileId: String }],
   },
-  { indexes: [[{ lcId: 1 }], [{ orderId: 1 }], [{ contractId: 1 }]], schema: { minimize: false } },
+  {
+    indexes: [
+      [{ lcId: 1 }],
+      [{ orderId: 1 }, { unique: true, sparse: true }],
+      [{ contractId: 1 }],
+      [{ partnerId: 1, status: 1 }],
+    ],
+    schema: { minimize: false },
+  },
 );
 
 /** Binds a `bank_operator` user to the issuing banks whose LCs they may work. Unassigned operators see nothing. */

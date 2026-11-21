@@ -92,6 +92,21 @@ describe('POST /v1/orders idempotency (mobile)', () => {
     expect(await OrderModel.countDocuments({})).toBe(3);
   });
 
+  it('high contention: 24 concurrent orders on a 300 g lot create exactly 3 and leave it sold (regression: decrement/sold race)', async () => {
+    const userId = await createUser();
+    const product = await seedProduct({ availableGrams: 300 });
+    const results = await Promise.all(
+      Array.from({ length: 24 }, (_, i) =>
+        request(app).post('/v1/orders').set(MOBILE).set('x-test-user', userId).set('Idempotency-Key', `order-key-race-${i}`).send(mobileBody(product._id, 100)),
+      ),
+    );
+    expect(results.filter((r) => r.status === 201).length).toBe(3);
+    const after = (await ProductModel.findById(product._id).lean())!;
+    expect(after.availableGrams).toBe(0);
+    expect(after.status).toBe('sold');
+    expect(await OrderModel.countDocuments({})).toBe(3);
+  });
+
   it('service-level: same key returns the same orderId', async () => {
     const userId = await createUser();
     const product = await seedProduct();

@@ -24,7 +24,7 @@ function periodRange(period: unknown, required: boolean): { from: Date; to: Date
   return { from: new Date(Date.UTC(year, month, 1)), to: new Date(Date.UTC(year, month + 1, 1)), label: `${MONTHS[month]} ${year}`, key: String(period) };
 }
 
-function settlementDto(s: Record<string, any>, parties: Map<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function settlementDto(s: Record<string, any>, parties: Map<string, any>) {  
   return {
     id: s.settlementId,
     date: iso(s.date),
@@ -83,7 +83,7 @@ export const settlementRoutes: AdminRouteDef[] = [
         filter,
         sort: sortSpec(req, { id: 'settlementId', date: 'date', amount: 'amount.amountMinor', status: 'status' }, { date: -1, _id: 1 }),
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const parties = await loadUserMap(docs.map((d) => d.partyId));
           return docs.map((d) => settlementDto(d, parties));
         },

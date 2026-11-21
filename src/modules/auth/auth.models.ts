@@ -13,10 +13,21 @@ const accessShape = Object.fromEntries(MODULES.map((m) => [m, { type: String, en
 const roleSchema = new Schema<any>(
   {
     roleId: { type: String, required: true, unique: true },
+    /** Canonical role key used by the dashboard RBAC. */
+    key: {
+      type: String,
+      enum: ['super', 'ops', 'trading', 'compliance', 'inspection', 'finance', 'logistics', 'catalogue', 'support'],
+    },
     name: { type: String, required: true },
     description: String,
     scope: { type: String, default: '' },
     access: accessShape,
+    /** Action permissions; module levels in `access` are derived for `/admin/v1`. */
+    actions: { type: [String], default: [] },
+    limits: {
+      payoutApproveMaxMinor: Number,
+      refundApproveMaxMinor: Number,
+    },
     system: { type: Boolean, default: false },
     /** Staff pickers (#19) filter by this kind. */
     kind: { type: String, enum: ['field_agent', 'desk', 'compliance', 'support', 'content', 'data_entry', 'executive'], default: 'desk' },
@@ -24,4 +35,5 @@ const roleSchema = new Schema<any>(
   },
   { timestamps: true },
 );
+roleSchema.index({ key: 1 }, { unique: true, sparse: true });
 export const Role = defineModel('Role', roleSchema, 'roles');

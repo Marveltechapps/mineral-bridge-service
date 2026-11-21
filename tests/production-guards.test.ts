@@ -8,6 +8,12 @@ const strong = {
   WS_TOKEN_SECRET: 'd'.repeat(40),
 };
 
+const splitCors = {
+  corsWebOrigins: ['https://app.mineralbridge.test'],
+  corsAdminOrigins: ['https://admin.mineralbridge.test'],
+  allowedOrigins: '',
+};
+
 describe('production configuration guards', () => {
   it('allows a hardened production configuration', () => {
     expect(
@@ -17,6 +23,7 @@ describe('production configuration guards', () => {
         emailProvider: 'resend',
         cookieSecure: true,
         secrets: strong,
+        ...splitCors,
       }),
     ).toEqual([]);
   });
@@ -30,12 +37,36 @@ describe('production configuration guards', () => {
       secrets: { JWT_ACCESS_SECRET: 'dev-access-secret-min-32-characters!!' },
       otpTestOtp: '1234',
       debugMode: '1',
+      corsWebOrigins: ['http://localhost:3100', 'https://admin.mineralbridge.test'],
+      corsAdminOrigins: ['https://admin.mineralbridge.test'],
+      allowedOrigins: 'https://app.mineralbridge.test,https://admin.mineralbridge.test',
     });
-    expect(failures.join('\n')).toMatch(/OTP_PROVIDER=fake/);
-    expect(failures.join('\n')).toMatch(/EMAIL_PROVIDER=fake/);
-    expect(failures.join('\n')).toMatch(/COOKIE_SECURE/);
-    expect(failures.join('\n')).toMatch(/OTP_TEST_OTP/);
-    expect(failures.join('\n')).toMatch(/DEBUG_MODE/);
+    const text = failures.join('\n');
+    expect(text).toMatch(/OTP_PROVIDER=fake/);
+    expect(text).toMatch(/EMAIL_PROVIDER=fake/);
+    expect(text).toMatch(/COOKIE_SECURE/);
+    expect(text).toMatch(/OTP_TEST_OTP/);
+    expect(text).toMatch(/DEBUG_MODE/);
+    expect(text).toMatch(/ALLOWED_ORIGINS must be unset/);
+    expect(text).toMatch(/must be disjoint/);
+    expect(text).toMatch(/must use https/);
+  });
+
+  it('rejects a production config that only set the legacy combined allow-list', () => {
+    const failures = productionGuardFailures({
+      nodeEnv: 'production',
+      otpProvider: 'twilio',
+      emailProvider: 'resend',
+      cookieSecure: true,
+      secrets: strong,
+      corsWebOrigins: [],
+      corsAdminOrigins: [],
+      allowedOrigins: 'https://app.mineralbridge.test,https://admin.mineralbridge.test',
+    });
+    const text = failures.join('\n');
+    expect(text).toMatch(/CORS_WEB_ORIGINS must list/);
+    expect(text).toMatch(/CORS_ADMIN_ORIGINS must list/);
+    expect(text).toMatch(/ALLOWED_ORIGINS must be unset/);
   });
 
   it('does not apply the production rules outside production', () => {

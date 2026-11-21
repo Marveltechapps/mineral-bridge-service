@@ -48,7 +48,7 @@
         "publicNoToken": 24
       },
       "conventions": {
-        "auth": "Bearer access token (15 min) + refreshToken in JSON body (60 d, rotating, stored in Keychain/Keystore). No passwords; phone + 6-digit SMS OTP. Optional X-Transaction-Pin header on bids, withdrawals, account delete.",
+        "auth": "Bearer access token (15 min) + refreshToken in JSON body (60 d, rotating, stored in Keychain/Keystore). No passwords; phone + 4-digit SMS OTP. Optional X-Transaction-Pin header on bids, withdrawals, account delete.",
         "clientHeader": "X-Client: mineralbridge-mobile/<version> (<build>); also X-Platform, X-Device-Id, Accept-Language",
         "money": "{ amount: integer MINOR units, currency, scale } e.g. { amount: 1535000000, currency: \"USD\", scale: 2 } = $15,350,000.00; optional display string",
         "quantity": "{ value, unit: g|kg|t, grams }",
@@ -74,7 +74,7 @@
           "permission": null,
           "domain": "Authentication & Session",
           "screens": "signupPhone, login",
-          "purpose": "Send a 6-digit SMS code to a number; `intent` is `signup` or `login`"
+          "purpose": "Send a 4-digit SMS code to a number; `intent` is `signup` or `login`"
         },
         {
           "n": 2,
@@ -3215,7 +3215,7 @@
         "publicOrPreSession": 7
       },
       "conventions": {
-        "auth": "HttpOnly session cookie mb_admin_session (SameSite=Strict, Path=/admin) + X-CSRF-Token on every POST/PUT/PATCH/DELETE (double-submit; token from csrfToken in /me and OTP verify). Staff email+password (or SSO) then 6-digit OTP challenge. Idle 30 min, absolute 12 h, lockable session. RBAC matrix module:view|edit; four-eyes on money-moving actions.",
+        "auth": "HttpOnly session cookie mb_admin_session (SameSite=Strict, Path=/admin) + X-CSRF-Token on every POST/PUT/PATCH/DELETE (double-submit; token from csrfToken in /me and OTP verify). Staff email+password (or SSO) then 4-digit OTP challenge. Idle 30 min, absolute 12 h, lockable session. RBAC matrix module:view|edit; four-eyes on money-moving actions.",
         "clientHeader": "None required (separate prefix); optional X-Timezone, Idempotency-Key, If-Match",
         "money": "{ amount: DECIMAL number in MAJOR units (<= 2 decimals), currency: USD|KES|BTC } e.g. 5940000 = $5,940,000.00. NOT minor units.",
         "quantity": "{ value, unit: kg|t|g|oz }",
@@ -3277,7 +3277,7 @@
           "permission": null,
           "domain": "Auth & Session",
           "screens": "Verify → **Verify and open console**",
-          "purpose": "Verify the 6-digit code, issue the session cookie"
+          "purpose": "Verify the 4-digit code, issue the session cookie"
         },
         {
           "n": 5,
@@ -3554,6 +3554,18 @@
           "domain": "Orders",
           "screens": "**Advance to {next stage}**",
           "purpose": "Move to the next of the 6 stages"
+        },
+        {
+          "n": 142,
+          "method": "POST",
+          "path": "/orders/{orderId}/price",
+          "fullPath": "/admin/v1/orders/{orderId}/price",
+          "auth": "session",
+          "kyc": false,
+          "permission": "Orders:edit",
+          "domain": "Orders",
+          "screens": "**Confirm agreed price**",
+          "purpose": "Store the unit rate agreed with the customer and reveal the order value"
         },
         {
           "n": 28,
@@ -5035,7 +5047,7 @@
         "web": "public"
       },
       "severity": "high",
-      "notes": "Request bodies differ. Mobile: { phone (E.164), intent: signup|login, channel?: sms|voice|whatsapp } -> { challengeId, expiresIn: 60, resendAfter: 42, channel, maskedPhone, accountExists } (6-digit SMS). Web: { method: mobile|email|whatsapp, identifier, intent } -> same shape as POST /auth/register response { challengeId, method, target, expiresIn, codeLength: 4 }. Web supports email OTP, mobile does not. Mobile returns accountExists (enumeration risk); web contract forbids revealing account existence. Different rate limits (web: 3/identifier/15 min, 10/IP/h).",
+      "notes": "Request bodies differ. Mobile: { phone (E.164), intent: signup|login, channel?: sms|voice|whatsapp } -> { challengeId, expiresIn: 60, resendAfter: 42, channel, maskedPhone, accountExists } (4-digit SMS). Web: { method: mobile|email|whatsapp, identifier, intent } -> same shape as POST /auth/register response { challengeId, method, target, expiresIn, codeLength: 4 }. Web supports email OTP, mobile does not. Mobile returns accountExists (enumeration risk); web contract forbids revealing account existence. Different rate limits (web: 3/identifier/15 min, 10/IP/h).",
       "resolution": "Single route handler; branch on req.client (X-Client) to select request validator and response mapper. Same Mongoose model underneath."
     },
     {

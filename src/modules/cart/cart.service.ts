@@ -27,8 +27,8 @@ async function ensureCart(userId: string): Promise<ICart> {
 
 export function assertQuantity(p: IProduct, grams: number): void {
   if (p.status !== 'active') throw unprocessable('Product is not available', { productId: 'Unavailable' }, 'catalog/product-unavailable');
-  if (grams < p.minOrderGrams || grams % p.stepGrams !== 0) {
-    throw unprocessable('Quantity is below the minimum or not a valid step', { quantity: `Minimum ${p.minOrderGrams} g in steps of ${p.stepGrams} g` }, 'catalog/invalid-quantity');
+  if (!(grams > 0)) {
+    throw unprocessable('Enter a quantity greater than zero', { quantity: 'Enter a quantity greater than zero' }, 'catalog/invalid-quantity');
   }
   if (grams > p.availableGrams) throw unprocessable('Only part of that quantity is available', { quantity: `Max ${p.availableGrams} g` }, 'catalog/insufficient-quantity');
 }

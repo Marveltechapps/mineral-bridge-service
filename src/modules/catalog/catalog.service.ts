@@ -82,6 +82,8 @@ interface HierarchyFormNode {
   sourceId: string | null;
   sourceSheet: boolean;
   isActive: boolean;
+  /** Sellable catalog product this form can be ordered as. Null for a form with no live lot. */
+  productId: string | null;
 }
 interface HierarchyTypeNode {
   id: string;
@@ -164,7 +166,11 @@ function attachStoredProducts(tree: HierarchyCategoryNode[], products: IProduct[
     if (!subcategory.imageUrl && imageUrl) subcategory.imageUrl = imageUrl;
     if (!mineralType.imageUrl && imageUrl) mineralType.imageUrl = imageUrl;
     const formSlug = product.productFormSlug || slugify(`${mineralType.slug}-${formName}`);
-    if (mineralType.productForms.some((form) => form.slug === formSlug || form.name === formName)) continue;
+    const existing = mineralType.productForms.find((form) => form.slug === formSlug || form.name === formName);
+    if (existing) {
+      if (!existing.productId) existing.productId = product._id;
+      continue;
+    }
     const sourceSheet = product.attributes?.sourceSheet === true;
     mineralType.productForms.push({
       id: product._id,
@@ -178,6 +184,7 @@ function attachStoredProducts(tree: HierarchyCategoryNode[], products: IProduct[
       sourceId: product.mineralCode || null,
       sourceSheet,
       isActive: true,
+      productId: product._id,
     });
   }
   for (const category of tree) {
@@ -265,6 +272,7 @@ export const catalogService = {
                   sourceId: form.sourceId ?? null,
                   sourceSheet: form.sourceSheet,
                   isActive: form.active,
+                  productId: null,
                 })),
             })),
         })),

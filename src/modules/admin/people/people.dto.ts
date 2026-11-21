@@ -26,7 +26,7 @@ export async function userIdsMatching(q: unknown, limit = 50): Promise<string[]>
   return (await User.find({ $or: [{ name: re }, { org: re }] }).limit(limit).lean()).map((u) => u.userId);
 }
 
-export function userSummaryDto(u: Record<string, any>, orderCount: number, pii: boolean) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function userSummaryDto(u: Record<string, any>, orderCount: number, pii: boolean) {  
   return {
     id: u.userId,
     name: u.name,
@@ -42,7 +42,7 @@ export function userSummaryDto(u: Record<string, any>, orderCount: number, pii: 
 export const daysToExpiry = (d?: Date | null): number | null => (d ? Math.ceil((d.getTime() - Date.now()) / MS_DAY) : null);
 
 /** Stored status is the review state; expiry makes a verified document expiring (< 35 d) or expired. */
-export function effectiveDocStatus(d: Record<string, any>): string { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function effectiveDocStatus(d: Record<string, any>): string {  
   const days = daysToExpiry(d.expiresOn);
   if (d.status === 'verified' && days !== null) {
     if (days < 0) return 'expired';
@@ -51,7 +51,7 @@ export function effectiveDocStatus(d: Record<string, any>): string { // eslint-d
   return d.status;
 }
 
-export function trackedDocumentDto(d: Record<string, any>, holders: Map<string, PartyRef>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function trackedDocumentDto(d: Record<string, any>, holders: Map<string, PartyRef>) {  
   return {
     id: d.docId,
     type: d.type,
@@ -65,7 +65,7 @@ export function trackedDocumentDto(d: Record<string, any>, holders: Map<string, 
   };
 }
 
-export function ticketDto(t: Record<string, any>, users: Map<string, PartyRef>, staff: Map<string, StaffRef>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function ticketDto(t: Record<string, any>, users: Map<string, PartyRef>, staff: Map<string, StaffRef>) {  
   return {
     id: t.ticketId,
     subject: t.subject,

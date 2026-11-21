@@ -108,6 +108,9 @@ export const lcsService = {
     if (c.status !== 'countersigned') throw conflict('lc/contract-not-executed', 'The contract must be signed by both parties before applying for an LC.');
     const existing = await LetterOfCreditModel.findOne({ contractId }).lean<ILetterOfCredit>();
     if (existing) return existing;
+    if (!c.terms.issuingBankId || !c.terms.total || !c.terms.lcType || !c.terms.tenor) {
+      throw conflict('lc/contract-terms-incomplete', 'Contract terms are incomplete for an LC application.');
+    }
     const bank = await bankInfo(c.terms.issuingBankId);
     const at = now();
     try {

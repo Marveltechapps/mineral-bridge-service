@@ -6,7 +6,11 @@ const kycDocumentSchema = new Schema<KycDocumentShape>(
     publicId: { type: String, required: true, unique: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     submissionId: { type: Schema.Types.ObjectId, ref: 'KycSubmission', index: true },
-    kind: { type: String, enum: ['id_front', 'id_back', 'selfie'], required: true },
+    kind: {
+      type: String,
+      enum: ['id_front', 'id_back', 'selfie', 'proof_of_address', 'business_registration'],
+      required: true,
+    },
     idTypeId: String,
     fileId: { type: String, required: true, index: true },
     mimeType: String,
@@ -32,9 +36,14 @@ const kycDocumentSchema = new Schema<KycDocumentShape>(
           status: { type: String, enum: ['in_review', 'verified', 'rejected'] },
           reason: String,
           decidedAt: Date,
+          decidedBy: String,
         },
         { _id: false },
       ),
+      default: undefined,
+    },
+    flag: {
+      type: new Schema({ message: String, at: Date, by: String }, { _id: false }),
       default: undefined,
     },
     uploadedAt: { type: Date, required: true },
@@ -55,8 +64,18 @@ const kycSubmissionSchema = new Schema<KycSubmissionShape>(
     },
     idTypeId: String,
     idNumber: { type: String, select: false },
+    idNumberHash: { type: String, index: true, sparse: true },
     idNumberLast4: String,
     documentIds: { type: [Schema.Types.ObjectId], default: [] },
+    requiredKinds: {
+      type: [
+        {
+          type: String,
+          enum: ['id_front', 'id_back', 'selfie', 'proof_of_address', 'business_registration'],
+        },
+      ],
+      default: undefined,
+    },
     requestedTier: { type: Number, enum: [1, 2, 3] },
     declaredDetails: {
       fullName: String,
@@ -75,12 +94,40 @@ const kycSubmissionSchema = new Schema<KycSubmissionShape>(
     reviewStartedAt: Date,
     decidedAt: Date,
     decidedBy: String,
+    slaDueAt: Date,
     rejection: {
       type: new Schema(
         { code: String, reason: String, retryAllowed: Boolean, hint: String },
         { _id: false },
       ),
       default: undefined,
+    },
+    requestedDocuments: {
+      type: [
+        {
+          _id: false,
+          kind: {
+            type: String,
+            enum: ['id_front', 'id_back', 'selfie', 'proof_of_address', 'business_registration'],
+          },
+          reason: String,
+          at: Date,
+          by: String,
+        },
+      ],
+      default: [],
+    },
+    history: {
+      type: [
+        {
+          _id: false,
+          action: String,
+          actor: { kind: String, id: String, name: String, role: String },
+          at: Date,
+          reason: String,
+        },
+      ],
+      default: [],
     },
     reviewNotes: String,
     notifyOnDecision: { type: Boolean, default: false },
@@ -94,6 +141,8 @@ kycSubmissionSchema.index(
   { unique: true, partialFilterExpression: { status: 'draft' }, name: 'one_draft_per_user' },
 );
 kycSubmissionSchema.index({ status: 1, submittedAt: 1 }); // reviewer queue
+kycSubmissionSchema.index({ status: 1, slaDueAt: 1 });
+kycDocumentSchema.index({ submissionId: 1, kind: 1, discardedAt: 1 });
 
 export const KycDocumentModel: Model<KycDocumentShape> =
   (mongoose.models.KycDocument as Model<KycDocumentShape> | undefined) ??

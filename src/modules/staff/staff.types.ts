@@ -25,10 +25,24 @@ export interface StaffRoleRef {
   scope: string;
 }
 
+export type StaffRoleKey =
+  | 'super'
+  | 'ops'
+  | 'trading'
+  | 'compliance'
+  | 'inspection'
+  | 'finance'
+  | 'logistics'
+  | 'catalogue'
+  | 'support';
+
 export interface StaffShape {
   /** Human-readable id used on the admin wire: `STF-2026-ABCDE`. */
   publicId: string;
+  /** Dashboard admin number `AD-n`. */
+  adminNo?: string;
   email: string;
+  whatsapp?: string;
   passwordHash: string;
   /** Last N password hashes (newest first, includes the current one) for the "not one of the last 5" rule. */
   passwordHistory: string[];
@@ -37,9 +51,26 @@ export interface StaffShape {
   name: string;
   desk: string;
   role: StaffRoleRef;
+  /** Built-in console role key, or the key of a custom role stored in settings. */
+  roleKey?: StaffRoleKey | (string & {});
   permissions: Permissions;
+  /** Effective action permissions (denormalised from role). */
+  actions?: string[];
+  /**
+   * True when `actions` is authoritative even if empty: a custom role, or a built-in role whose
+   * permissions were edited. Default role actions and the module fallback are then ignored.
+   */
+  actionsOverride?: boolean;
+  mfa?: { enabled: boolean; channels: string[] };
   disabled: boolean;
   disabledAt?: Date;
+  /** Set when an admin is deleted from the console. The row stays for the audit trail and cannot sign in. */
+  deletedAt?: Date;
+  deletedBy?: string;
+  /** The address the admin had before deletion. `email` is replaced so it can be invited again. */
+  deletedEmail?: string;
+  invitedBy?: string;
+  invitedAt?: Date;
   /** Keys such as `offers_awaiting_approval`; missing keys fall back to defaults. */
   notificationPreferences: Record<string, boolean>;
   ssoSubject?: string;

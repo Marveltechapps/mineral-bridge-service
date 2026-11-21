@@ -71,7 +71,7 @@ export async function issueCustomerTokens(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Mobile — phone + 6-digit code, no passwords
+// Mobile — phone + 4-digit code, no passwords
 // ---------------------------------------------------------------------------------------------
 
 export const ACCOUNT_NOT_FOUND_MESSAGE =

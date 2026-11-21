@@ -1,3 +1,4 @@
+import { CONFIRMED_ORDER_PRICE } from '../orders/orders.service.js';
 import { Enrolment } from '../../../models/content.models.js';
 import { User } from '../../../models/people.models.js';
 import { Auction, Order } from '../../../models/trading.models.js';
@@ -9,7 +10,7 @@ const TARGET_DAYS: Record<string, number> = { verification: 1.5, pricing_confirm
 const deltaPct = (cur: number, prev: number) => (prev ? round1(((cur - prev) / prev) * 100) : 0);
 
 async function gmvMinor(from: Date, to: Date): Promise<number> {
-  const rows = await Order.aggregate([{ $match: { status: { $in: ['active', 'completed'] }, openedAt: { $gte: from, $lt: to }, 'value.currency': 'USD' } }, { $group: { _id: null, minor: { $sum: '$value.amountMinor' } } }]);
+  const rows = await Order.aggregate([{ $match: { status: { $in: ['active', 'completed'] }, openedAt: { $gte: from, $lt: to }, 'value.currency': 'USD', ...CONFIRMED_ORDER_PRICE } }, { $group: { _id: null, minor: { $sum: '$value.amountMinor' } } }]);
   return rows[0]?.minor ?? 0;
 }
 
@@ -36,7 +37,7 @@ export const analyticsRoutes: AdminRouteDef[] = [
       avgCycleDays(w.prevFrom, w.from),
       fillRate(w.from, w.now),
       fillRate(w.prevFrom, w.from),
-      Order.aggregate([{ $match: { status: { $in: ['active', 'completed'] }, openedAt: { $gte: w.from }, 'value.currency': 'USD' } }, { $group: { _id: '$mineral.name', minor: { $sum: '$value.amountMinor' } } }, { $sort: { minor: -1 } }, { $limit: 12 }]),
+      Order.aggregate([{ $match: { status: { $in: ['active', 'completed'] }, openedAt: { $gte: w.from }, 'value.currency': 'USD', ...CONFIRMED_ORDER_PRICE } }, { $group: { _id: '$mineral.name', minor: { $sum: '$value.amountMinor' } } }, { $sort: { minor: -1 } }, { $limit: 12 }]),
       User.aggregate([{ $group: { _id: '$tier', users: { $sum: 1 } } }, { $sort: { _id: 1 } }]),
       Auction.aggregate([{ $match: { status: 'ended', endsAt: { $gte: monthsBack } } }, { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$endsAt' } }, avg: { $avg: '$bidCount' } } }, { $sort: { _id: 1 } }]),
       Enrolment.aggregate([{ $match: { startedAt: { $gte: w.from } } }, { $group: { _id: null, started: { $sum: '$lessonsStarted' }, completed: { $sum: '$lessonsCompleted' } } }]),

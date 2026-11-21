@@ -31,6 +31,8 @@ export interface IListing {
   status: ListingStatus;
   indicativeNet?: MoneyDoc;
   quoteSnapshot?: { gross: MoneyDoc; fee: MoneyDoc; net: MoneyDoc; feeBps: number };
+  /** True once the desk has entered the price agreed with the seller. */
+  priceConfirmed?: boolean;
   submittedAt?: Date;
   visitScheduledFor?: Date;
   verification?: { agent?: { name: string; contact: string }; completedAt?: Date; findings?: string; assay?: { grade: string; method: string; laboratory: string }; result?: 'completed' | 'failed' };
@@ -64,6 +66,7 @@ export const ListingModel = defineModel<IListing>(
     },
     indicativeNet: { type: Object },
     quoteSnapshot: { type: Object },
+    priceConfirmed: { type: Boolean, default: false },
     submittedAt: Date,
     visitScheduledFor: Date,
     verification: { type: Object },
@@ -207,12 +210,14 @@ export interface INegotiationOffer {
 export interface INegotiation {
   _id: string;
   reference: string;
-  lotId: string;
-  lotName: string;
-  lotSummary: string;
-  lotGrade: string;
+  orderId?: string;
+  counterparty?: 'platform' | 'user';
+  lotId?: string;
+  lotName?: string;
+  lotSummary?: string;
+  lotGrade?: string;
   buyerId: string;
-  sellerId: string;
+  sellerId?: string;
   status: 'awaiting_reply' | 'offer_received' | 'agreed' | 'closed';
   offers: INegotiationOffer[];
   agreedOfferId?: string;
@@ -234,12 +239,14 @@ export const NegotiationModel = defineModel<INegotiation>(
   {
     _id: pk('neg'),
     reference: { type: String, required: true, unique: true },
-    lotId: { type: String, required: true },
+    orderId: String,
+    counterparty: { type: String, enum: ['platform', 'user'], default: 'user' },
+    lotId: String,
     lotName: String,
     lotSummary: String,
     lotGrade: String,
     buyerId: { type: String, required: true },
-    sellerId: { type: String, required: true },
+    sellerId: String,
     status: { type: String, enum: ['awaiting_reply', 'offer_received', 'agreed', 'closed'], default: 'awaiting_reply' },
     offers: [
       {
@@ -269,7 +276,14 @@ export const NegotiationModel = defineModel<INegotiation>(
     openKey: { type: String, unique: true, sparse: true },
     version: { type: Number, default: 0 },
   },
-  { indexes: [[{ buyerId: 1, updatedAt: -1 }], [{ sellerId: 1, updatedAt: -1 }]], schema: { minimize: false } },
+  {
+    indexes: [
+      [{ buyerId: 1, updatedAt: -1 }],
+      [{ sellerId: 1, updatedAt: -1 }],
+      [{ orderId: 1 }, { unique: true, sparse: true }],
+    ],
+    schema: { minimize: false },
+  },
 );
 
 export interface INegotiationMessage {

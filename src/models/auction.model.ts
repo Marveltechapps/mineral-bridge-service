@@ -1,9 +1,11 @@
+import type { ActorRef, QtyDoc } from './schema-primitives.js';
 import type { MoneyDoc } from './_shared.js';
 import { defineModel, pk } from './_shared.js';
 
 /** Canonical auction states. Mobile maps ended+unsold -> reserve_not_met; web -> unsold (X-7). */
 export type AuctionStatus = 'draft' | 'scheduled' | 'live' | 'paused' | 'ended' | 'cancelled';
 export type BidKind = 'manual' | 'auto' | 'opening';
+export type AuctionAccess = 'all_verified' | 'tier2_plus' | 'tier3_only';
 
 export interface IAuction {
   _id: string;
@@ -11,6 +13,7 @@ export interface IAuction {
   name: string;
   productId?: string;
   quantityGrams: number;
+  qty?: QtyDoc;
   grade?: string;
   origin?: string;
   description?: string;
@@ -27,6 +30,13 @@ export interface IAuction {
   closesAt: Date;
   originalClosesAt: Date;
   status: AuctionStatus;
+  access?: AuctionAccess;
+  flags?: { kind: string; note?: string; bidIds?: string[]; by?: ActorRef; at: Date }[];
+  risk?: { kind: string; text: string; at: Date };
+  cancelReason?: string;
+  relist?: { action: string; at: Date; refId?: string; by?: ActorRef };
+  createdBy?: ActorRef;
+  awardedOrderId?: string;
   /** Optimistic-concurrency counter; incremented on every accepted bid / extension. */
   version: number;
   bidCount: number;
@@ -56,6 +66,7 @@ export const AuctionModel = defineModel<IAuction>(
     name: { type: String, required: true },
     productId: String,
     quantityGrams: { type: Number, required: true },
+    qty: { type: Object },
     grade: String,
     origin: String,
     description: String,
@@ -92,8 +103,27 @@ export const AuctionModel = defineModel<IAuction>(
     gradientTo: String,
     mediaCount: { type: Number, default: 0 },
     assured: { type: Boolean, default: false },
+    access: { type: String, enum: ['all_verified', 'tier2_plus', 'tier3_only'], default: 'all_verified' },
+    flags: [
+      {
+        _id: false,
+        kind: String,
+        note: String,
+        bidIds: [String],
+        by: Object,
+        at: Date,
+      },
+    ],
+    risk: { kind: String, text: String, at: Date },
+    cancelReason: String,
+    relist: { action: String, at: Date, refId: String, by: Object },
+    createdBy: { type: Object },
+    awardedOrderId: String,
   },
-  { indexes: [[{ status: 1, closesAt: 1 }], [{ opensAt: 1 }]], schema: { minimize: false } },
+  {
+    indexes: [[{ status: 1, closesAt: 1 }], [{ opensAt: 1 }], [{ productId: 1, status: 1 }]],
+    schema: { minimize: false },
+  },
 );
 
 export interface IBid {

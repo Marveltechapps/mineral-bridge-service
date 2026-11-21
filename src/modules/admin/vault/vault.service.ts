@@ -11,7 +11,7 @@ export const LOT_SORT: Record<string, string> = { id: 'lotId', mineral: 'mineral
 
 export const IN_CUSTODY = { status: { $ne: 'shipped' } };
 
-export function lotSummary(l: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function lotSummary(l: any) {  
   return {
     id: l.lotId,
     mineral: l.mineral?.name,
@@ -37,7 +37,7 @@ export function suggestionsFor(costBasis: StoredMoney | undefined, realisable: S
   };
 }
 
-export async function mapLotDetail(l: any, index?: Map<string, RateDoc>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export async function mapLotDetail(l: any, index?: Map<string, RateDoc>) {  
   const idx = index ?? (await loadRateIndex());
   const { realisable, rate } = realisableOf(l, idx);
   const [files, partners] = await Promise.all([

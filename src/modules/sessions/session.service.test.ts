@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { hashToken } from '../../common/utils/crypto.js';
+import { loadEnv } from '../../config/env.js';
 import {
   deriveCsrfToken,
   evaluateRefresh,
   evaluateStaffSession,
   generateRefreshToken,
+  nextIdleExpiry,
   parseRefreshToken,
   refreshFailure,
   staffSessionExpiresAt,
@@ -116,6 +118,12 @@ describe('evaluateStaffSession', () => {
   it('expiresAt is the earlier deadline', () => {
     expect(staffSessionExpiresAt(base)).toEqual(at(60_000));
     expect(staffSessionExpiresAt({ idleExpiresAt: FUTURE, absoluteExpiresAt: at(1_000) })).toEqual(at(1_000));
+  });
+  it('slides the idle deadline forward without passing the absolute cap', () => {
+    const idleMs = loadEnv().ADMIN_IDLE_TIMEOUT_SECONDS * 1000;
+    expect(nextIdleExpiry(NOW, new Date(NOW.getTime() + idleMs * 2)).getTime()).toBe(NOW.getTime() + idleMs);
+    const soon = new Date(NOW.getTime() + 5_000);
+    expect(nextIdleExpiry(NOW, soon).getTime()).toBe(soon.getTime());
   });
 });
 

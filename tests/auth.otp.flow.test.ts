@@ -54,11 +54,11 @@ describe('OTP request, verify, expiry, and resend', () => {
       now,
     });
     const code = otp.lastCodeFor(phone);
-    expect(code).toMatch(/^\d{6}$/);
+    expect(code).toMatch(/^\d{4}$/);
     expect(JSON.stringify(info)).not.toContain(code);
 
     await expect(
-      verifyChallenge({ challengeId: info.challengeId, code: '000000', client: 'mobile', destination: phone, now }),
+      verifyChallenge({ challengeId: info.challengeId, code: '0000', client: 'mobile', destination: phone, now }),
     ).rejects.toMatchObject({ code: 'auth/otp-invalid' });
 
     const verified = await verifyChallenge({
@@ -87,7 +87,8 @@ describe('OTP request, verify, expiry, and resend', () => {
         code: otp.lastCodeFor('+2348022222222')!,
         client: 'mobile',
         destination: '+2348022222222',
-        now: new Date(now.getTime() + 120_000),
+        // Customer OTP TTL is 10 minutes (doc 12/18 F8) — expire past that window.
+        now: new Date(now.getTime() + 11 * 60_000),
       }),
     ).rejects.toMatchObject({ code: 'auth/otp-expired' });
   });

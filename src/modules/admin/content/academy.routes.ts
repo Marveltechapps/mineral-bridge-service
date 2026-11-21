@@ -12,7 +12,7 @@ import { auditActor } from '../shared/staff-context.js';
 import { User } from '../../../models/people.models.js';
 import { pct, round1 } from '../overview/reporting.js';
 
-const courseDto = (c: Record<string, any>, lessonCount: number) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+const courseDto = (c: Record<string, any>, lessonCount: number) => ({  
   id: c.courseId,
   categoryId: c.categoryId,
   title: c.title,
@@ -22,7 +22,7 @@ const courseDto = (c: Record<string, any>, lessonCount: number) => ({ // eslint-
   ...(c.summary ? { summary: c.summary } : {}),
 });
 
-const lessonDto = (l: Record<string, any>) => ({ id: l.lessonId, courseId: l.courseId, title: l.title, position: l.position, media: l.media, body: l.body ?? '', status: l.status }); // eslint-disable-line @typescript-eslint/no-explicit-any
+const lessonDto = (l: Record<string, any>) => ({ id: l.lessonId, courseId: l.courseId, title: l.title, position: l.position, media: l.media, body: l.body ?? '', status: l.status });  
 
 async function publishedCounts(courseIds?: string[]): Promise<Map<string, number>> {
   const rows = await Lesson.aggregate([{ $match: { status: 'published', ...(courseIds ? { courseId: { $in: courseIds } } : {}) } }, { $group: { _id: '$courseId', n: { $sum: 1 } } }]);
@@ -154,6 +154,6 @@ export const academyRoutes: AdminRouteDef[] = [
   }),
 ];
 
-function pick(obj: Record<string, any>, keys: Record<string, unknown>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function pick(obj: Record<string, any>, keys: Record<string, unknown>) {  
   return Object.fromEntries(Object.keys(keys).map((k) => [k, obj[k]]));
 }

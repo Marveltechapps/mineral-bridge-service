@@ -29,7 +29,7 @@ export async function loadUserMap(ids: Array<string | null | undefined>): Promis
   return map;
 }
 
-export function partyOf(u: Record<string, any>): PartyRef { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function partyOf(u: Record<string, any>): PartyRef {  
   return { id: u.userId, name: u.name, ...(u.org ? { org: u.org } : {}), ...(u.tier ? { tier: u.tier as 1 | 2 | 3 } : {}) };
 }
 

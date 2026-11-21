@@ -34,6 +34,20 @@ export const userRepository = {
     return toRecord(await UserModel.findOne({ phone, isDeleted: false }).lean<LeanUser>());
   },
 
+  async findByWhatsapp(whatsapp: string): Promise<UserRecord | null> {
+    return toRecord(await UserModel.findOne({ whatsapp, isDeleted: false }).lean<LeanUser>());
+  },
+
+  /** Match phone or whatsapp to the same E.164 (v2 multi-channel sign-in). */
+  async findByPhoneOrWhatsapp(e164: string): Promise<UserRecord | null> {
+    return toRecord(
+      await UserModel.findOne({
+        isDeleted: false,
+        $or: [{ phone: e164 }, { whatsapp: e164 }],
+      }).lean<LeanUser>(),
+    );
+  },
+
   async findByEmail(email: string): Promise<UserRecord | null> {
     return toRecord(
       await UserModel.findOne({ email: email.toLowerCase(), isDeleted: false }).lean<LeanUser>(),

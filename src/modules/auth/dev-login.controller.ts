@@ -115,7 +115,7 @@ export async function adminDevVerify(req: Request, res: Response): Promise<void>
     code: body.code,
     device: deviceFromRequest(req),
   });
-  setAdminSessionCookie(res, issued.sessionToken);
+  setAdminSessionCookie(res, issued.sessionToken, req);
   res.setHeader('X-CSRF-Token', issued.csrfToken);
   noStore(res);
   res.status(200).json({

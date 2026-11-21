@@ -116,7 +116,7 @@ async function main(): Promise<void> {
       challengeId: { type: 'string' },
       expiresIn: { type: 'integer' },
       expiresAt: { type: 'string', format: 'date-time' },
-      codeLength: { type: 'integer', enum: [6] },
+      codeLength: { type: 'integer', enum: [4] },
       developmentOtp: { type: 'string', description: 'Returned only by the development login challenge endpoint.' },
       channel: { type: 'string' },
       maskedDestination: { type: 'string' },
@@ -151,7 +151,7 @@ async function main(): Promise<void> {
       required: ['challengeId', 'code'],
       properties: {
         challengeId: { type: 'string' },
-        code: { type: 'string', pattern: '^\\d{6}$' },
+        code: { type: 'string', pattern: '^\\d{4}$' },
         rememberDevice: { type: 'boolean' },
       },
     }),
@@ -172,7 +172,7 @@ async function main(): Promise<void> {
     post: devPath(['admin'], 'Verify the admin development code and issue the normal staff session', 'post', {
       type: 'object',
       required: ['challengeId', 'code'],
-      properties: { challengeId: { type: 'string' }, code: { type: 'string', pattern: '^\\d{6}$' } },
+      properties: { challengeId: { type: 'string' }, code: { type: 'string', pattern: '^\\d{4}$' } },
     }),
   };
 

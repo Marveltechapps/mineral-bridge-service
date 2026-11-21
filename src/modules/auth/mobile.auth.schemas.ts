@@ -22,7 +22,7 @@ export const mobileOtpRequestBody = z.object({
 export const mobileOtpVerifyBody = z.object({
   challengeId,
   phone: z.string().min(1).max(32),
-  code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+  code: z.string().regex(/^\d{4}$/, 'Enter the 4-digit code'),
   device: deviceSchema,
 });
 

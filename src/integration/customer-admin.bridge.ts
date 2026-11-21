@@ -10,11 +10,14 @@ import type { IOrder } from '../models/order.model.js';
 import { UserModel } from '../models/user.model.js';
 import { ListingModel } from '../models/web-trade.model.js';
 import type { IListing, ListingStatus } from '../models/web-trade.model.js';
-import { unitPriceMinorPerGram } from '../common/utils/pricing-math.js';
+import { quotedPriceToE4PerGram, unitPriceMinorPerGram } from '../common/utils/pricing-math.js';
+import type { ClientSession } from 'mongoose';
 import { KycDocument, KycSubmission, User } from '../models/people.models.js';
 import { FileObject } from '../models/platform.models.js';
 import { Order } from '../models/trading.models.js';
+import { opaqueId } from '../common/utils/ids.js';
 import { ORDER_STAGES, type OrderStage } from '../modules/admin/shared/enums.js';
+import { docsFor, stagesFor } from '../modules/orders/order.stages.js';
 import { reviewDocumentName, reviewDocumentSide } from '../modules/kyc/kyc.id-types.js';
 import { KycDocumentModel, KycSubmissionModel } from '../modules/kyc/kyc.model.js';
 import { decideSubmission } from '../modules/kyc/kyc.review.js';
@@ -354,8 +357,19 @@ const LISTING_STATUS_FOR_STAGE: Record<string, ListingStatus> = {
   pricing_confirmation: 'submitted',
   agent_visit: 'visit_scheduled',
   inspection_approval: 'verified',
-  payment_released: 'paid',
+  payment_released: 'in_transit',
   custody_transfer: 'received',
+};
+
+/** Listing statuses only move forward. Payment is recorded on the order; custody is `received`. */
+const LISTING_RANK: Record<string, number> = {
+  draft: 0,
+  submitted: 1,
+  visit_scheduled: 2,
+  verified: 3,
+  in_transit: 4,
+  received: 5,
+  paid: 6,
 };
 
 const VERIFICATION_LABEL: Record<ListingStatus, string> = {
@@ -371,13 +385,9 @@ const VERIFICATION_LABEL: Record<ListingStatus, string> = {
 
 function adminOrderStatus(status: string): 'active' | 'completed' | 'cancelled' {
   if (status === 'cancelled' || status === 'rejected') return 'cancelled';
-  if (status === 'completed' || status === 'paid') return 'completed';
+  // `paid` is not custody. Completing the desk order here blocked the custody-transfer write.
+  if (status === 'completed' || status === 'received') return 'completed';
   return 'active';
-}
-
-function moneyFrom(doc?: { amountMinor?: number; currency?: string } | null) {
-  if (!doc || typeof doc.amountMinor !== 'number') return undefined;
-  return { amountMinor: doc.amountMinor, currency: doc.currency || 'USD', scale: 2 };
 }
 
 function listingLocation(address: IListing['verificationAddress']): string {
@@ -408,18 +418,63 @@ async function projectAccountForUser(userId: string): Promise<void> {
   });
 }
 
+/** Copies a desk-confirmed total onto the customer order and sell listing that share this reference. */
+export async function writeConfirmedCustomerPrice(
+  reference: string,
+  value: { amountMinor: number; currency: string },
+  unitPrice: { amount: number; per: string },
+  session?: ClientSession,
+): Promise<void> {
+  const money = { amountMinor: value.amountMinor, currency: value.currency || 'USD' };
+  const zero = { amountMinor: 0, currency: money.currency };
+  const lookup = OrderModel.findOne({ reference }).select('lines');
+  if (session) lookup.session(session);
+  const customer = await lookup.lean();
+  const set: Record<string, unknown> = {
+    priceConfirmed: true,
+    total: money,
+    subtotal: money,
+    platformFee: zero,
+    surcharge: zero,
+  };
+  if (customer && (customer.lines ?? []).length === 1) {
+    const e4 = quotedPriceToE4PerGram(unitPrice.amount, unitPrice.per);
+    if (e4 > 0) {
+      set['lines.0.unitPriceMinorE4PerGram'] = e4;
+      set['lines.0.lineTotalMinor'] = money.amountMinor;
+    }
+  }
+  await OrderModel.updateOne({ reference }, { $set: set }, { session });
+  await ListingModel.updateOne(
+    { reference },
+    { $set: { priceConfirmed: true, indicativeNet: money }, $unset: { quoteSnapshot: '' } },
+    { session },
+  );
+}
+
+function confirmedCustomerPrice(order: IOrder): Record<string, unknown> | null {
+  if (!order.priceConfirmed || typeof order.total?.amountMinor !== 'number') return null;
+  const currency = order.total.currency || 'USD';
+  const fields: Record<string, unknown> = {
+    value: { amountMinor: order.total.amountMinor, currency, scale: 2 },
+    priceConfirmedAt: order.updatedAt ?? new Date(),
+  };
+  const line = order.lines[0];
+  const rateMinor = line?.unitPriceMinorE4PerGram ? unitPriceMinorPerGram(line.unitPriceMinorE4PerGram) : 0;
+  if (rateMinor > 0) fields.lockedRate = { amountMinor: rateMinor, currency, scale: 2, per: 'g' };
+  return fields;
+}
+
 export async function projectCustomerOrder(order: IOrder): Promise<void> {
   const line = order.lines[0];
   const qty = quantityFromGrams(order.totalGrams);
   const stage = ORDER_STAGES[order.stageIndex] ?? 'verification';
-  const rateMinor = line?.unitPriceMinorE4PerGram ? unitPriceMinorPerGram(line.unitPriceMinorE4PerGram) : undefined;
   const settlement = SETTLEMENT_LABEL[order.settlement?.method || order.paymentMethod] ?? order.paymentMethod;
   const commercial: Record<string, unknown> = {
     side: order.side,
     mineral: { ...(line?.productId ? { id: line.productId } : {}), name: line?.name ?? 'Mineral' },
     counterpartyId: order.userId,
     quantity: qty,
-    value: { amountMinor: order.total.amountMinor, currency: order.total.currency || 'USD', scale: 2 },
     openedAt: order.createdAt ?? new Date(),
     origin: [order.delivery?.city, order.delivery?.region, order.region].filter(Boolean).join(', '),
     destination: order.delivery?.facilityName || order.delivery?.streetAddress || '',
@@ -427,21 +482,25 @@ export async function projectCustomerOrder(order: IOrder): Promise<void> {
     customerStatus: order.status,
     note: `Customer order ${order._id}`,
   };
-  if (rateMinor) {
-    commercial.lockedRate = { amountMinor: rateMinor, currency: order.total.currency || 'USD', scale: 2, per: 'g' };
-  }
-  const existing = await Order.findOne({ orderId: order.reference }).select('_id').lean();
+  const agreed = confirmedCustomerPrice(order);
+  const existing = await Order.findOne({ orderId: order.reference }).select('priceConfirmedAt paymentStatus').lean();
+  const locked = Boolean(existing?.priceConfirmedAt) || existing?.paymentStatus === 'released';
   if (existing) {
-    await Order.updateOne(
-      { orderId: order.reference },
-      { $set: { ...commercial, status: adminOrderStatus(order.status) } },
-    );
+    await Order.updateOne({ orderId: order.reference }, { $set: { ...commercial, status: adminOrderStatus(order.status) } });
+    if (!locked && agreed) {
+      await Order.updateOne({ orderId: order.reference, priceConfirmedAt: null, paymentStatus: { $ne: 'released' } }, { $set: agreed });
+    } else if (!locked) {
+      await Order.updateOne(
+        { orderId: order.reference, priceConfirmedAt: null, paymentStatus: { $ne: 'released' } },
+        { $unset: { value: 1, lockedRate: 1 } },
+      );
+    }
     return;
   }
   await Order.updateOne(
     { orderId: order.reference },
     {
-      $set: commercial,
+      $set: { ...commercial, ...(agreed ?? {}) },
       $setOnInsert: {
         status: adminOrderStatus(order.status),
         stage,
@@ -478,6 +537,73 @@ async function listingPhotoDocuments(listing: IListing) {
   return documents;
 }
 
+/** A submitted sell listing is also a customer order, so My Orders follows the same stage index as the desk. */
+async function ensureSellCustomerOrder(listing: IListing): Promise<void> {
+  const existing = await OrderModel.findOne({ reference: listing.reference }).select('_id').lean();
+  if (existing) return;
+  const admin = await Order.findOne({ orderId: listing.reference }).select('stage stageLog priceConfirmedAt value').lean();
+  const stageName = (admin?.stage as OrderStage | undefined) ?? stageForListing(listing.status);
+  const idx = Math.max(0, ORDER_STAGES.indexOf(stageName));
+  const history: Array<{ index: number; key: string; at: Date; note?: string }> = [];
+  for (const entry of (admin?.stageLog ?? []) as Array<{ stage?: string; at?: Date; description?: string }>) {
+    const index = ORDER_STAGES.indexOf(entry.stage as OrderStage);
+    if (index < 0) continue;
+    history.push({
+      index,
+      key: stagesFor('sell')[index]?.key ?? entry.stage ?? 'submitted',
+      at: entry.at ?? new Date(),
+      note: entry.description,
+    });
+  }
+  if (!history.some((entry) => entry.index === idx)) {
+    history.push({ index: idx, key: stagesFor('sell')[idx]!.key, at: listing.submittedAt ?? new Date(), note: 'Sell listing submitted' });
+  }
+  const currency = admin?.value?.currency || listing.indicativeNet?.currency || 'USD';
+  const confirmed = Boolean(admin?.priceConfirmedAt) && typeof admin?.value?.amountMinor === 'number' && admin.value.amountMinor > 0;
+  const money = confirmed
+    ? { amountMinor: admin!.value.amountMinor as number, currency }
+    : { amountMinor: 0, currency };
+  const zero = { amountMinor: 0, currency };
+  try {
+  await OrderModel.create({
+    reference: listing.reference,
+    userId: listing.userId,
+    side: 'sell',
+    status: CUSTOMER_STATUS_FOR_STAGE[idx] ?? 'pending_review',
+    stageIndex: idx,
+    stageHistory: history,
+    source: { kind: 'listing', refId: listing._id },
+    lines: [{ name: listing.mineralName, grams: listing.grams, unitPriceMinorE4PerGram: 0, lineTotalMinor: money.amountMinor }],
+    totalGrams: listing.grams,
+    subtotal: money,
+    platformFee: zero,
+    surcharge: zero,
+    total: money,
+    priceConfirmed: confirmed,
+    paymentMethod: 'wire',
+    paymentTaken: idx >= 4,
+    settlement: {
+      method: 'wire',
+      status: idx >= 4 ? 'released' : 'not_funded',
+      ...(idx >= 4 ? { releasedAt: new Date() } : {}),
+    },
+    region: listing.verificationAddress?.region || listing.verificationAddress?.city,
+    delivery: {
+      city: listing.verificationAddress?.city,
+      region: listing.verificationAddress?.region,
+      country: listing.verificationAddress?.country,
+      streetAddress: listing.verificationAddress?.streetAddress,
+    },
+    documents: docsFor('sell').map((doc) => ({ _id: opaqueId('doc'), ...doc })),
+    settlementKey: `listing:${listing._id}`,
+    version: 0,
+  });
+  } catch (err) {
+    if (typeof err === 'object' && err !== null && (err as { code?: number }).code === 11000) return;
+    throw err;
+  }
+}
+
 /** A submitted customer sell listing becomes a sell-side order the desk can verify. */
 export async function projectCustomerListing(listing: IListing): Promise<void> {
   if (listing.status === 'draft') return;
@@ -487,8 +613,6 @@ export async function projectCustomerListing(listing: IListing): Promise<void> {
     logger.error({ err, userId: listing.userId }, 'seller account was not projected');
   }
   const qty = quantityFromGrams(listing.grams);
-  const value = moneyFrom(listing.indicativeNet ?? listing.quoteSnapshot?.net);
-  const gross = moneyFrom(listing.quoteSnapshot?.gross);
   const documents = await listingPhotoDocuments(listing);
   const stage = stageForListing(listing.status);
   const commercial: Record<string, unknown> = {
@@ -505,16 +629,7 @@ export async function projectCustomerListing(listing: IListing): Promise<void> {
     listingId: listing._id,
     note: `Customer sell listing ${listing.reference}`,
   };
-  if (value) commercial.value = value;
-  if (gross && listing.grams > 0) {
-    commercial.lockedRate = {
-      amountMinor: Math.round(gross.amountMinor / listing.grams),
-      currency: gross.currency,
-      scale: 2,
-      per: 'g',
-    };
-  }
-  const existing = await Order.findOne({ orderId: listing.reference }).select('documents').lean();
+  const existing = await Order.findOne({ orderId: listing.reference }).select('documents priceConfirmedAt paymentStatus').lean();
   if (existing) {
     await Order.updateOne(
       { orderId: listing.reference },
@@ -526,6 +641,14 @@ export async function projectCustomerListing(listing: IListing): Promise<void> {
         },
       },
     );
+    const locked = Boolean(existing.priceConfirmedAt) || existing.paymentStatus === 'released';
+    if (!locked) {
+      await Order.updateOne(
+        { orderId: listing.reference, priceConfirmedAt: null, paymentStatus: { $ne: 'released' } },
+        { $unset: { value: 1, lockedRate: 1 } },
+      );
+    }
+    await ensureSellCustomerOrder(listing);
     return;
   }
   await Order.updateOne(
@@ -543,6 +666,7 @@ export async function projectCustomerListing(listing: IListing): Promise<void> {
     },
     { upsert: true },
   );
+  await ensureSellCustomerOrder(listing);
 }
 
 let tradeSync: Promise<void> | null = null;
@@ -589,20 +713,31 @@ const CUSTOMER_STATUS_FOR_STAGE: Record<number, IOrder['status']> = {
 export async function reflectAdminOrderStage(orderReference: string, stage: string): Promise<void> {
   const idx = ORDER_STAGES.indexOf(stage as OrderStage);
   if (idx < 0) return;
+  const listing = await ListingModel.findOne({ reference: orderReference }).lean<IListing>();
+  if (listing) await ensureSellCustomerOrder(listing);
+  const customer = await OrderModel.findOne({ reference: orderReference }).select('side').lean<IOrder>();
   const status = CUSTOMER_STATUS_FOR_STAGE[idx] ?? 'active';
+  const key = customer ? (stagesFor(customer.side)[idx]?.key ?? stage) : stage;
+  const customerSet: Record<string, unknown> = { stageIndex: idx, status };
+  if (idx >= 4) {
+    customerSet.paymentTaken = true;
+    customerSet['settlement.status'] = 'released';
+    customerSet['settlement.releasedAt'] = new Date();
+  }
   await OrderModel.updateOne(
     { reference: orderReference },
     {
-      $set: { stageIndex: idx, status },
-      $push: { stageHistory: { index: idx, key: stage, at: new Date(), note: 'Updated from the operations console' } },
+      $set: customerSet,
+      $push: { stageHistory: { index: idx, key, at: new Date(), note: 'Updated from the operations console' } },
     },
   );
   await Order.updateOne({ orderId: orderReference }, { $set: { customerStatus: status } });
-  const listing = await ListingModel.findOne({ reference: orderReference }).lean<IListing>();
   if (!listing) return;
-  let next = LISTING_STATUS_FOR_STAGE[stage];
-  if (!next) return;
-  if (stage === 'custody_transfer' && listing.status === 'paid') next = 'paid';
+  const next = LISTING_STATUS_FOR_STAGE[stage];
+  if (!next || listing.status === 'rejected') return;
+  const currentRank = LISTING_RANK[listing.status] ?? 0;
+  const nextRank = LISTING_RANK[next] ?? 0;
+  if (nextRank <= currentRank) return;
   await ListingModel.updateOne({ reference: orderReference }, { $set: { status: next } });
   await Order.updateOne(
     { orderId: orderReference },

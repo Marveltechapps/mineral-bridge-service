@@ -93,10 +93,14 @@ const partnerSchema = new Schema<any>(
     partnerId: { type: String, required: true, unique: true },
     name: { type: String, required: true },
     type: { type: String, enum: PARTNER_TYPES, required: true, index: true },
+    parentPartnerId: String,
+    modes: [{ type: String, enum: ['road', 'rail', 'sea', 'air'] }],
+    regions: [String],
     base: String,
     capacity: String,
     email: String,
     phone: String,
+    contactName: String,
     accreditation: String,
     status: { type: String, enum: PARTNER_STATUSES, default: 'onboarding', index: true },
     internalNote: String,
@@ -105,6 +109,7 @@ const partnerSchema = new Schema<any>(
   },
   opts,
 );
+partnerSchema.index({ parentPartnerId: 1 });
 export const Partner = defineModel('Partner', partnerSchema, 'partners');
 
 /* ───────── Support ───────── */

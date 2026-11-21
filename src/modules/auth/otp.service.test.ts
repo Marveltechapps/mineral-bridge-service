@@ -53,16 +53,21 @@ describe('isThrottled', () => {
 });
 
 describe('otpPolicy', () => {
-  it('uses 6 digits for mobile and admin, 4 for web (W-9)', () => {
-    expect(otpPolicy('mobile').codeLength).toBe(6);
-    expect(otpPolicy('admin').codeLength).toBe(6);
+  it('uses 4 digits for mobile, web, and admin', () => {
+    expect(otpPolicy('mobile').codeLength).toBe(4);
+    expect(otpPolicy('admin').codeLength).toBe(4);
     expect(otpPolicy('web').codeLength).toBe(4);
   });
 
-  it('allows email only for web and admin', () => {
-    expect(otpPolicy('mobile').allowedChannels).not.toContain('email');
+  it('allows email for customer and admin channels (doc 07 AUTH-01)', () => {
+    expect(otpPolicy('mobile').allowedChannels).toContain('email');
     expect(otpPolicy('web').allowedChannels).toContain('email');
     expect(otpPolicy('admin').allowedChannels).toContain('email');
+  });
+
+  it('uses a 10-minute customer OTP window (doc 12/18 F8)', () => {
+    expect(otpPolicy('mobile').ttlSeconds).toBeGreaterThanOrEqual(600);
+    expect(otpPolicy('web').ttlSeconds).toBe(600);
   });
 
   it('uses the contract resend cooldowns', () => {

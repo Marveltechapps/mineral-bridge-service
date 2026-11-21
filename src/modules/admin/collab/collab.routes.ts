@@ -18,7 +18,7 @@ import { route, type AdminRouteDef } from '../shared/route-kit.js';
 const REMINDER_COOLDOWN_MS = 12 * MS_HOUR;
 const TERMINAL = ['terms_agreed', 'contracted'];
 
-function negotiationDto(n: Record<string, any>, users: Map<string, any>, withHistory = false) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function negotiationDto(n: Record<string, any>, users: Map<string, any>, withHistory = false) {  
   const ask = n.ask?.amountMinor ?? 0;
   const gap = ask ? Number((((ask - (n.offer?.amountMinor ?? 0)) / ask) * 100).toFixed(1)) : 0;
   return {
@@ -35,14 +35,14 @@ function negotiationDto(n: Record<string, any>, users: Map<string, any>, withHis
     lastActivityAt: iso(n.lastActivityAt),
     ...(withHistory
       ? {
-          history: (n.history ?? []).map((h: Record<string, any>) => ({ round: h.round, side: h.side, price: outUnitPrice(h.price), at: iso(h.at) })), // eslint-disable-line @typescript-eslint/no-explicit-any
+          history: (n.history ?? []).map((h: Record<string, any>) => ({ round: h.round, side: h.side, price: outUnitPrice(h.price), at: iso(h.at) })),  
           suggestedMidpoint: n.ask && n.offer ? outUnitPrice({ ...n.ask, amountMinor: Math.round((n.ask.amountMinor + n.offer.amountMinor) / 2) }) : null,
         }
       : {}),
   };
 }
 
-export function contractDto(c: Record<string, any>, users: Map<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function contractDto(c: Record<string, any>, users: Map<string, any>) {  
   return { id: c.contractId, seller: partyFrom(users, c.sellerId), buyer: partyFrom(users, c.buyerId), goods: c.goods ?? '', value: outMoney(c.value), signedAt: iso(c.signedAt), lcId: c.lcId || null, negotiationId: c.negotiationId ?? '' };
 }
 
@@ -99,7 +99,7 @@ export const collabRoutes: AdminRouteDef[] = [
         filter: and(status && { status }, search),
         sort: { lastActivityAt: -1, _id: 1 },
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const users = await loadUserMap(docs.flatMap((d) => [d.minerId, d.traderId]));
           return docs.map((d) => negotiationDto(d, users));
         },
@@ -203,7 +203,7 @@ export const collabRoutes: AdminRouteDef[] = [
         filter: and({ status: 'signed' }, signedFrom && { signedAt: { $gte: signedFrom } }, noLc, search),
         sort: { signedAt: -1, _id: 1 },
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const users = await loadUserMap(docs.flatMap((d) => [d.sellerId, d.buyerId]));
           return docs.map((d) => contractDto(d, users));
         },

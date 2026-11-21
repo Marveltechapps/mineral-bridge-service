@@ -8,5 +8,6 @@ coverage/
 uploads/
 tmp/
 reports/
+backups/
 .mongo-data/
 mongodb-memory-server*

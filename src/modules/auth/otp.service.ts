@@ -36,27 +36,28 @@ export interface OtpPolicy {
 
 /**
  * Per-client OTP rules (W-9: lengths differ, so challenges are never shared):
- *  - mobile: 6 digits, 60 s window (`OTP_TTL_SECONDS`), resend countdown 42 s
- *  - web:    4 digits (contract: fixed, "changing it is a breaking change"), 5 min window
- *  - admin:  6 digits, 5 min challenge
+ *  - mobile: 4 digits, 60 s window (`OTP_TTL_SECONDS`), resend countdown 42 s
+ *  - web:    4 digits, 5 min window
+ *  - admin:  4 digits, 5 min challenge
  */
 export function otpPolicy(client: OtpClient): OtpPolicy {
   const env = loadEnv();
   switch (client) {
     case 'mobile':
       return {
-        codeLength: 6,
-        ttlSeconds: env.OTP_TTL_SECONDS,
+        codeLength: 4,
+        // Doc 12/18 F8: customer OTP window is 10 minutes (legacy /v1 mobile still used env TTL).
+        ttlSeconds: Math.max(env.OTP_TTL_SECONDS, 600),
         resendCooldownSeconds: 42,
         maxAttempts: env.OTP_MAX_ATTEMPTS,
         maxPerDestinationPerWindow: env.OTP_MAX_PER_PHONE_15MIN,
         maxPerIpPerWindow: env.OTP_MAX_PER_IP_15MIN,
-        allowedChannels: ['sms', 'voice', 'whatsapp'],
+        allowedChannels: ['sms', 'voice', 'whatsapp', 'email'],
       };
     case 'web':
       return {
-        codeLength: isDevelopmentOtpEnabled() ? 6 : 4,
-        ttlSeconds: 300,
+        codeLength: 4,
+        ttlSeconds: 600,
         resendCooldownSeconds: 30,
         maxAttempts: env.OTP_MAX_ATTEMPTS,
         maxPerDestinationPerWindow: env.OTP_MAX_PER_PHONE_15MIN,
@@ -65,7 +66,7 @@ export function otpPolicy(client: OtpClient): OtpPolicy {
       };
     case 'admin':
       return {
-        codeLength: 6,
+        codeLength: 4,
         ttlSeconds: 300,
         resendCooldownSeconds: 30,
         maxAttempts: env.OTP_MAX_ATTEMPTS,
@@ -217,12 +218,12 @@ interface SendSlot {
 }
 
 function issueCode(length: number): string {
-  if (!isDevelopmentOtpEnabled() || length !== 6) return generateOtpDigits(length);
+  if (!isDevelopmentOtpEnabled() || length !== 4) return generateOtpDigits(length);
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const code = generateOtpDigits(6);
+    const code = generateOtpDigits(4);
     if (isAcceptableDevOtp(code)) return code;
   }
-  return generateOtpDigits(6);
+  return generateOtpDigits(4);
 }
 
 function revealDevelopmentCode(code: string, decoy: boolean): string | undefined {

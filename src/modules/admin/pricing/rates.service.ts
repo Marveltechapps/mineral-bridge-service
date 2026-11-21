@@ -22,7 +22,7 @@ export function lookupRate(idx: Map<string, RateDoc>, mineral: string, grade?: s
 
 /** Realisable value = quantity × live SELL rate; falls back to cost basis when no rate exists. */
 export function realisableOf(
-  lot: Record<string, any>, // eslint-disable-line @typescript-eslint/no-explicit-any
+  lot: Record<string, any>,  
   idx: Map<string, RateDoc>,
 ): { realisable: StoredMoney | undefined; rate: RateDoc | undefined } {
   const rate = lookupRate(idx, lot.mineral?.name ?? '', lot.grade);

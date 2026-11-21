@@ -6,6 +6,7 @@ export type TicketStatus = 'open' | 'agent_replied' | 'waiting_on_user' | 'escal
 export interface ITicketMessage {
   _id: string;
   author: 'user' | 'agent' | 'system';
+  authorId?: string;
   authorName?: string;
   body: string;
   attachmentIds: string[];
@@ -20,6 +21,13 @@ export interface ISupportTicket {
   subject: string;
   body: string;
   relatedTo?: { type: string; id: string };
+  orderId?: string;
+  channel?: 'app' | 'web' | 'phone' | 'whatsapp' | 'email';
+  assignee?: { staffId: string; at: Date };
+  internalNotes?: { staffId: string; text: string; at: Date }[];
+  unreadForStaff?: number;
+  lastCustomerMessageAt?: Date;
+  legacyRef?: string;
   status: TicketStatus;
   messages: ITicketMessage[];
   attachmentIds: string[];
@@ -39,6 +47,13 @@ export const SupportTicketModel = defineModel<ISupportTicket>(
     subject: { type: String, required: true },
     body: { type: String, required: true },
     relatedTo: { type: Object },
+    orderId: String,
+    channel: { type: String, enum: ['app', 'web', 'phone', 'whatsapp', 'email'], default: 'app' },
+    assignee: { staffId: String, at: Date },
+    internalNotes: [{ _id: false, staffId: String, text: String, at: Date }],
+    unreadForStaff: { type: Number, default: 0 },
+    lastCustomerMessageAt: Date,
+    legacyRef: String,
     status: {
       type: String,
       enum: ['open', 'agent_replied', 'waiting_on_user', 'escalated', 'resolved', 'closed'],
@@ -48,6 +63,7 @@ export const SupportTicketModel = defineModel<ISupportTicket>(
       {
         _id: SubDocId('msg'),
         author: { type: String, enum: ['user', 'agent', 'system'], required: true },
+        authorId: String,
         authorName: String,
         body: { type: String, required: true },
         attachmentIds: [String],
@@ -58,7 +74,14 @@ export const SupportTicketModel = defineModel<ISupportTicket>(
     resolvedAt: Date,
     version: { type: Number, default: 0 },
   },
-  { indexes: [[{ userId: 1, updatedAt: -1 }]] },
+  {
+    indexes: [
+      [{ userId: 1, updatedAt: -1 }],
+      [{ status: 1, lastCustomerMessageAt: -1 }],
+      [{ orderId: 1 }, { sparse: true }],
+      [{ 'assignee.staffId': 1, status: 1 }],
+    ],
+  },
 );
 
 export interface IChatMessage {

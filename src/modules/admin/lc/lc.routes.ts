@@ -21,7 +21,7 @@ const LC_SORT: Record<string, string> = { id: 'lcId', amount: 'amount.amountMino
 
 const daysToExpiry = (expiry?: Date | null): number | null => (expiry ? Math.ceil((expiry.getTime() - Date.now()) / MS_DAY) : null);
 
-function lcDto(lc: Record<string, any>, users: Map<string, ReturnType<typeof partyFrom>>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function lcDto(lc: Record<string, any>, users: Map<string, ReturnType<typeof partyFrom>>) {  
   return {
     id: lc.lcId,
     applicant: partyFrom(users as never, lc.applicantId),
@@ -38,7 +38,7 @@ function lcDto(lc: Record<string, any>, users: Map<string, ReturnType<typeof par
   };
 }
 
-async function lcDetail(lc: Record<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+async function lcDetail(lc: Record<string, any>) {  
   const [users, staff] = await Promise.all([
     loadUserMap([lc.applicantId, lc.beneficiaryId]),
     loadStaffMap((lc.discrepancies ?? []).map((d: { resolvedBy?: string }) => d.resolvedBy)),
@@ -52,7 +52,7 @@ async function lcDetail(lc: Record<string, any>) { // eslint-disable-line @types
     ...lcDto(lc, users as never),
     latestShipmentDate: lc.latestShipmentDate ? isoDate(lc.latestShipmentDate) : null,
     documents: (lc.documents ?? []).map((d: { name: string; status: string; fileId?: string }) => ({ name: d.name, status: d.status, ...(d.fileId ? { fileId: d.fileId } : {}) })),
-    discrepancies: (lc.discrepancies ?? []).map((d: Record<string, any>) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+    discrepancies: (lc.discrepancies ?? []).map((d: Record<string, any>) => ({  
       id: d.id,
       text: d.text,
       raisedAt: iso(d.raisedAt),
@@ -61,7 +61,7 @@ async function lcDetail(lc: Record<string, any>) { // eslint-disable-line @types
     })),
     amendments: (lc.amendments ?? [])
       .filter((a: { draft?: boolean }) => !a.draft)
-      .map((a: Record<string, any>) => ({ id: a.id, type: a.type, newValue: a.newValue, status: a.status, requestedAt: iso(a.requestedAt) })), // eslint-disable-line @typescript-eslint/no-explicit-any
+      .map((a: Record<string, any>) => ({ id: a.id, type: a.type, newValue: a.newValue, status: a.status, requestedAt: iso(a.requestedAt) })),  
     canRelease: blocked === null,
     releaseBlockedReason: blocked,
   };
@@ -127,7 +127,7 @@ export const lcRoutes: AdminRouteDef[] = [
         filter,
         sort: sortSpec(req, LC_SORT, { createdAt: -1, _id: 1 }),
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const users = await loadUserMap(docs.flatMap((d) => [d.applicantId, d.beneficiaryId]));
           return docs.map((d) => lcDto(d, users as never));
         },

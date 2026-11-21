@@ -168,7 +168,7 @@ export const negotiationsService = {
     }
     const other = counterpartOf(n, userId);
     realtimeHub.publish(channels.negotiation(n._id), `offer.${kind}`, { negotiationId: n._id, offerId, authorId: userId, status: updated.status, contractId: updated.contractId ?? null, offers: updated.offers.map((o) => ({ id: o._id, state: o.state })), ...extra });
-    if (other !== PLATFORM_SELLER_ID) await notifyUser(other, { event: 'negotiation.offer', title: `Update on ${n.lotName}`, target: { type: 'negotiation', id: n._id } });
+    if (other && other !== PLATFORM_SELLER_ID) await notifyUser(other, { event: 'negotiation.offer', title: `Update on ${n.lotName}`, target: { type: 'negotiation', id: n._id } });
     return updated;
   },
 
@@ -185,7 +185,11 @@ export const negotiationsService = {
     if (inResponseTo && cur?._id !== inResponseTo) throw conflict('negotiation/offer-not-open', 'That offer is no longer open.');
     const next = buildOffer(userId, input, cur && cur.authorId !== userId ? cur._id : undefined);
     const offers = n.offers.map((o) => (o.state === 'open' ? { ...o, state: (o.authorId === userId ? 'superseded' : 'countered') as OfferState } : o)).concat(next);
-    const updated = await this.rewrite(n, userId, offers, { status: 'awaiting_reply', lastOfferAuthorId: userId, lastMessageAt: now(), lastMessagePreview: 'New offer', [`unread.${counterpartOf(n, userId)}`]: (n.unread[counterpartOf(n, userId)] ?? 0) + 1 }, false, cur && cur.authorId !== userId ? 'countered' : 'created', next._id, cur ? (cur.authorId === userId ? { supersededOfferId: cur._id } : { counteredOfferId: cur._id }) : {});
+    const counterpart = counterpartOf(n, userId);
+    const unreadPatch = counterpart
+      ? { [`unread.${counterpart}`]: (n.unread[counterpart] ?? 0) + 1 }
+      : {};
+    const updated = await this.rewrite(n, userId, offers, { status: 'awaiting_reply', lastOfferAuthorId: userId, lastMessageAt: now(), lastMessagePreview: 'New offer', ...unreadPatch }, false, cur && cur.authorId !== userId ? 'countered' : 'created', next._id, cur ? (cur.authorId === userId ? { supersededOfferId: cur._id } : { counteredOfferId: cur._id }) : {});
     await postMessage(updated, { kind: 'offer', authorId: userId, offerId: next._id });
     return updated;
   },

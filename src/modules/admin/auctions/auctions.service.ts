@@ -37,7 +37,7 @@ export async function requireAuction(auctionId: string) {
   return a;
 }
 
-export function staleAuction(a: Record<string, any>, verb: string) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function staleAuction(a: Record<string, any>, verb: string) {  
   return conflict('conflict/stale-state', `${a.auctionId} is ${a.status} — cannot ${verb}.`, { details: { status: a.status } });
 }
 
@@ -49,7 +49,7 @@ export async function emitAuctionEvent(auctionId: string, type: 'bid' | 'state' 
   return seq;
 }
 
-export function bidDto(b: Record<string, any>, users: Map<string, PartyRef>, auction: Record<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function bidDto(b: Record<string, any>, users: Map<string, PartyRef>, auction: Record<string, any>) {  
   return {
     id: b.bidId,
     amount: outMoney(b.amount),
@@ -61,7 +61,7 @@ export function bidDto(b: Record<string, any>, users: Map<string, PartyRef>, auc
   };
 }
 
-export function auctionSummary(a: Record<string, any>, users: Map<string, PartyRef>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function auctionSummary(a: Record<string, any>, users: Map<string, PartyRef>) {  
   return {
     id: a.auctionId,
     status: a.status,
@@ -84,7 +84,7 @@ export function auctionSummary(a: Record<string, any>, users: Map<string, PartyR
   };
 }
 
-export function auctionDetail(a: Record<string, any>, users: Map<string, PartyRef>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export function auctionDetail(a: Record<string, any>, users: Map<string, PartyRef>) {  
   const reserveVsCost = a.reserve && a.costBasis?.amountMinor ? Number((((a.reserve.amountMinor - a.costBasis.amountMinor) / a.costBasis.amountMinor) * 100).toFixed(1)) : 0;
   return {
     ...auctionSummary(a, users),
@@ -114,7 +114,7 @@ export async function auctionDetailById(auctionId: string) {
 }
 
 /** SSE payload for the `state` event. */
-export const stateEventData = (a: Record<string, any>) => ({ status: a.status, endsAt: iso(a.endsAt) }); // eslint-disable-line @typescript-eslint/no-explicit-any
+export const stateEventData = (a: Record<string, any>) => ({ status: a.status, endsAt: iso(a.endsAt) });  
 
 /**
  * Places a bid. Used by the customer-facing bid endpoints and exercised by the admin SSE tests.
@@ -149,7 +149,7 @@ export async function recordBid(input: { auctionId: string; bidderId: string; am
   return dto;
 }
 
-async function detectVelocity(a: Record<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+async function detectVelocity(a: Record<string, any>) {  
   if (a.riskSignal?.kind) return;
   const recent = await Bid.find({ auctionId: a.auctionId, at: { $gte: new Date(Date.now() - 60_000) } }).sort({ at: -1 }).limit(10).lean();
   if (recent.length < 5) return;

@@ -14,7 +14,7 @@ import { KYC_SLA_MS, trackedDocumentDto, userIdsMatching } from './people.dto.js
 
 const DOC_SORT: Record<string, string> = { type: 'type', holder: 'userId', tier: 'tier', daysToExpiry: 'expiresOn', status: 'status' };
 
-function kycDto(k: Record<string, any>, docs: Array<Record<string, any>>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function kycDto(k: Record<string, any>, docs: Array<Record<string, any>>) {  
   const slaDueAt: Date = k.slaDueAt ?? new Date(new Date(k.submittedAt).getTime() + KYC_SLA_MS);
   const open = (KYC_OPEN_STATUSES as readonly string[]).includes(k.status);
   return {
@@ -42,7 +42,7 @@ function kycDto(k: Record<string, any>, docs: Array<Record<string, any>>) { // e
 
 async function docsFor(kycIds: string[]) {
   const docs = await KycDocument.find({ kycId: { $in: kycIds } }).sort({ createdAt: 1 }).lean();
-  const byKyc = new Map<string, Array<Record<string, any>>>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const byKyc = new Map<string, Array<Record<string, any>>>();  
   for (const d of docs) byKyc.set(d.kycId, [...(byKyc.get(d.kycId) ?? []), d]);
   return byKyc;
 }
@@ -68,7 +68,7 @@ export const complianceRoutes: AdminRouteDef[] = [
         filter,
         sort: sortSpec(req, { id: 'kycId', tier: 'tier', submittedAt: 'submittedAt' }, { submittedAt: 1, _id: 1 }),
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           await Promise.all(docs.map((d) => backfillAdminKycFiles(d.kycId)));
           const byKyc = await docsFor(docs.map((d) => d.kycId));
           return docs.map((d) => kycDto(d, byKyc.get(d.kycId) ?? []));
@@ -82,7 +82,7 @@ export const complianceRoutes: AdminRouteDef[] = [
     if (!k) throw notFound('resource/not-found', `KYC submission ${req.params.kycId} not found`);
     await backfillAdminKycFiles(k.kycId);
     const [byKyc, staff] = await Promise.all([docsFor([k.kycId]), loadStaffMap((k.history ?? []).map((h: { actorId?: string }) => h.actorId))]);
-    res.json({ ...kycDto(k, byKyc.get(k.kycId) ?? []), history: (k.history ?? []).map((h: Record<string, any>) => ({ action: h.action, actor: h.actorId ? staffFrom(staff, h.actorId) : null, at: iso(h.at), ...(h.reason ? { reason: h.reason } : {}) })) }); // eslint-disable-line @typescript-eslint/no-explicit-any
+    res.json({ ...kycDto(k, byKyc.get(k.kycId) ?? []), history: (k.history ?? []).map((h: Record<string, any>) => ({ action: h.action, actor: h.actorId ? staffFrom(staff, h.actorId) : null, at: iso(h.at), ...(h.reason ? { reason: h.reason } : {}) })) });  
   }),
 
   route(100, 'POST /compliance/kyc/:kycId/decision', ['compliance', 'edit'], async (req, res) => {
@@ -171,7 +171,7 @@ export const complianceRoutes: AdminRouteDef[] = [
         filter,
         sort: sortSpec(req, DOC_SORT, { expiresOn: 1, _id: 1 }),
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const holders = await loadUserMap(docs.map((d) => d.userId));
           return docs.map((d) => trackedDocumentDto(d, holders));
         },

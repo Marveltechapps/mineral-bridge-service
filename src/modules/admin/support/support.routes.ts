@@ -19,7 +19,7 @@ async function staffIdsMatching(q: unknown): Promise<string[]> {
   return rows.map((r: { publicId: string }) => r.publicId);
 }
 
-async function mapTickets(docs: Array<Record<string, any>>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+async function mapTickets(docs: Array<Record<string, any>>) {  
   const [users, staff] = await Promise.all([loadUserMap(docs.map((d) => d.userId)), loadStaffMap(docs.map((d) => d.ownerId))]);
   return docs.map((d) => ticketDto(d, users, staff));
 }
@@ -74,7 +74,7 @@ export const supportRoutes: AdminRouteDef[] = [
     if (!t) throw notFound('resource/not-found', `Ticket ${req.params.ticketId} not found`);
     const [dto] = await mapTickets([t]);
     const staff = await loadStaffMap((t.notes ?? []).map((n: { authorId?: string }) => n.authorId));
-    res.json({ ...dto, notes: (t.notes ?? []).map((n: Record<string, any>) => ({ id: n.id, author: staffFrom(staff, n.authorId), text: n.text, at: iso(n.at) })) }); // eslint-disable-line @typescript-eslint/no-explicit-any
+    res.json({ ...dto, notes: (t.notes ?? []).map((n: Record<string, any>) => ({ id: n.id, author: staffFrom(staff, n.authorId), text: n.text, at: iso(n.at) })) });  
   }),
 
   route(122, 'GET /support/calls', ['support', 'view'], async (req, res) => {
@@ -92,7 +92,7 @@ export const supportRoutes: AdminRouteDef[] = [
         filter: and(direction && { direction }, agentId && { agentId }, search),
         sort: sortSpec(req, { at: 'at', who: 'userId', duration: 'durationSec', agent: 'agentId' }, { at: -1, _id: 1 }),
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const [users, staff] = await Promise.all([loadUserMap(docs.map((d) => d.userId)), loadStaffMap(docs.map((d) => d.agentId))]);
           return docs.map((d) => ({ id: d.callId, at: iso(d.at), who: (d.userId ? partyFrom(users, d.userId) : null) ?? unknownParty(d.phone ?? 'unknown'), phone: d.phone ?? '', direction: d.direction, durationSec: d.durationSec ?? 0, topic: d.topic ?? '', agent: staffFrom(staff, d.agentId) }));
         },

@@ -4,7 +4,13 @@ import { defineModel, pk, SubDocId } from './_shared.js';
 export interface ICart {
   _id: string;
   userId: string;
-  items: { _id: string; productId: string; grams: number; addedAt: Date }[];
+  items: {
+    _id: string;
+    productId: string;
+    grams: number;
+    qty?: { unit: string; base: number };
+    addedAt: Date;
+  }[];
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -19,7 +25,8 @@ export const CartModel = defineModel<ICart>(
       {
         _id: SubDocId('cit'),
         productId: { type: String, required: true },
-        grams: { type: Number, required: true, min: 1 },
+        grams: { type: Number, required: true, min: 0 },
+        qty: { unit: String, base: Number },
         addedAt: { type: Date, default: Date.now },
       },
     ],

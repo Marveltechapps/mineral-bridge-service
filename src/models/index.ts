@@ -15,3 +15,5 @@ export * from './notification.model.js';
 export * from './support.model.js';
 export * from './web-trade.model.js';
 export * from './contract-lc.model.js';
+export * from './workflow.model.js';
+export * from './schema-primitives.js';

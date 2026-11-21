@@ -21,17 +21,30 @@ import { StateMachine } from '../../common/utils/state-machine.js';
 export const shipmentMachine = new StateMachine<ShipmentStatus>(
   'shipment',
   {
-    booked: ['loaded', 'delayed'],
+    booked: ['loaded', 'delayed', 'pickup_scheduled'],
     loaded: ['in_transit', 'delayed'],
-    in_transit: ['discharged', 'delayed'],
+    in_transit: ['discharged', 'delayed', 'picked_up'],
     delayed: ['loaded', 'in_transit', 'discharged'],
     discharged: ['delivered'],
     delivered: [],
+    pickup_scheduled: ['picked_up', 'delayed'],
+    picked_up: ['in_transit', 'received_at_vault', 'delayed'],
+    received_at_vault: ['delivered'],
   },
   'shipment/invalid-transition',
 );
 
-const PROGRESS: Record<ShipmentStatus, number> = { booked: 5, loaded: 25, in_transit: 60, delayed: 60, discharged: 90, delivered: 100 };
+const PROGRESS: Record<ShipmentStatus, number> = {
+  booked: 5,
+  loaded: 25,
+  in_transit: 60,
+  delayed: 60,
+  discharged: 90,
+  delivered: 100,
+  pickup_scheduled: 10,
+  picked_up: 40,
+  received_at_vault: 95,
+};
 
 export const shipmentsService = {
   async get(userId: string, id: string): Promise<IShipment> {

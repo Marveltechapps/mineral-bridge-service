@@ -1,8 +1,8 @@
 import { noPermissions } from '../staff/default-roles.js';
 import { PERMISSION_MODULES, type AccessLevel, type PermissionModule, type Permissions } from '../staff/staff.types.js';
 
-/** Development codes are 6 digits so they are not the web customer's 4-digit code. */
-export const DEV_LOGIN_CODE_LENGTH = 6;
+/** Development login uses the same 4-digit length as customer and staff codes. */
+export const DEV_LOGIN_CODE_LENGTH = 4;
 const MIN_PASSWORD_LENGTH = 8;
 const MIN_TTL_SECONDS = 30;
 const MAX_TTL_SECONDS = 300;
@@ -12,21 +12,20 @@ const MAX_TTL_SECONDS = 300;
  * This list is a denylist, not a code the server will accept.
  */
 const WEAK_CODES = new Set([
-  '123456',
-  '654321',
-  '000000',
-  '111111',
-  '222222',
-  '333333',
-  '444444',
-  '555555',
-  '666666',
-  '777777',
-  '888888',
-  '999999',
-  '121212',
-  '123123',
-  '112233',
+  '1234',
+  '4321',
+  '0000',
+  '1111',
+  '2222',
+  '3333',
+  '4444',
+  '5555',
+  '6666',
+  '7777',
+  '8888',
+  '9999',
+  '1212',
+  '1122',
 ]);
 
 export interface DevLoginSecret {
@@ -64,7 +63,7 @@ export interface DevLoginEnvInput {
 }
 
 export function isAcceptableDevOtp(code: string): boolean {
-  if (!/^\d{6}$/.test(code) || WEAK_CODES.has(code)) return false;
+  if (!/^\d{4}$/.test(code) || WEAK_CODES.has(code)) return false;
   const digits = [...code].map((char) => Number(char));
   if (digits.every((digit) => digit === digits[0])) return false;
   const ascending = digits.every((digit, index) => index === 0 || digit === (digits[index - 1]! + 1) % 10);

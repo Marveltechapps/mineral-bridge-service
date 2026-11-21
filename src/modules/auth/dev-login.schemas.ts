@@ -8,6 +8,6 @@ export const devLoginBody = z.object({
 
 export const devLoginVerifyBody = z.object({
   challengeId: z.string().min(4).max(64),
-  code: z.string().regex(/^\d{6}$/, 'Enter the 6-digit development code'),
+  code: z.string().regex(/^\d{4}$/, 'Enter the 4-digit code'),
   rememberDevice: z.boolean().optional(),
 });

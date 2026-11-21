@@ -25,7 +25,7 @@ export function buildAuditFilter(query: Record<string, unknown>): Record<string,
   return and.length ? { $and: and } : {};
 }
 
-export function auditEntryDto(a: Record<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any{
+export function auditEntryDto(a: Record<string, any>) {  
   return {
     id: a.auditId,
     at: a.at.toISOString(),

@@ -1,7 +1,7 @@
 import { Router, type RequestHandler } from 'express';
 import rateLimit from 'express-rate-limit';
 import type { ZodTypeAny } from 'zod';
-import { requireStaffPermission } from '../../auth/auth.middleware.js';
+import { attachStaffCsrf, requireStaffPermission } from '../../auth/auth.middleware.js';
 import { adminSession, csrfProtect } from './staff-context.js';
 import { idempotency } from '../../../common/middleware/idempotency.js';
 import { validate } from '../../../common/middleware/validate.js';
@@ -116,7 +116,7 @@ export function buildAdminRouter(defs: AdminRouteDef[]): Router {
     if (def.auth === 'public' || def.auth === 'challenge' || def.auth === 'reset-token') {
       stack.push(limiter);
     } else {
-      stack.push(adminSession({ allowLocked: def.auth === 'locked-session' }), csrfProtect);
+      stack.push(adminSession({ allowLocked: def.auth === 'locked-session' }), csrfProtect, attachStaffCsrf);
       if (def.permission) stack.push(requireStaffPermission(def.permission.module, def.permission.level));
     }
     stack.push(...def.middleware);

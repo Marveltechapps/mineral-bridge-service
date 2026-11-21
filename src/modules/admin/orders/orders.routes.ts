@@ -4,7 +4,7 @@ import { withTx } from '../../../common/db/transaction.js';
 import { nextId } from '../../../common/db/sequence.js';
 import { docEtag, setEtag } from '../../../common/http/etag.js';
 import { User } from '../../../models/people.models.js';
-import { Listing, IntakeItem, Offer, Order, Rate, Settlement, VaultLot } from '../../../models/trading.models.js';
+import { Listing, IntakeItem, Offer, Order, Settlement, VaultLot } from '../../../models/trading.models.js';
 import { Role } from '../../auth/auth.models.js';
 import { StaffModel } from '../../staff/staff.model.js';
 import { assertFourEyes, auditActor, staffActor } from '../shared/staff-context.js';
@@ -21,29 +21,35 @@ import {
   adminMoneySchema,
   adminQuantitySchema,
   convertQty,
+  adminUnitPriceSchema,
   formatMoneyText,
   outMoney,
   outQty,
   outUnitPrice,
   parsePositiveMoney,
-  priceTimesQuantity,
-  type StoredUnitPrice,
 } from '../shared/money.js';
 import { notifyStaff } from '../shared/notify.js';
 import { loadFileRefs } from '../shared/files.js';
 import { loadStaffMap, loadUserMap, partyFrom, requireUser } from '../shared/refs.js';
 import { route, type AdminRouteDef } from '../shared/route-kit.js';
 import { reflectAdminOrderStage, syncCustomerTradeToAdmin } from '../../../integration/customer-admin.bridge.js';
-import { ORDER_SORT, buildOrderFilter, mapOrderDetail, mapOrderSummaries, requireOrder, stageIndex } from './orders.service.js';
+import { confirmAgreedPrice } from './confirm-price.js';
+import { ORDER_SORT, buildOrderFilter, mapOrderDetail, mapOrderSummaries, orderPriceVisible, requireOrder, stageIndex } from './orders.service.js';
 
-function staleStage(o: Record<string, any>, expected?: string) // eslint-disable-line @typescript-eslint/no-explicit-any
+function storedMinor(value: unknown): number {
+  if (!value || typeof value !== 'object') return 0;
+  const amount = (value as { amountMinor?: unknown }).amountMinor;
+  return typeof amount === 'number' && Number.isFinite(amount) ? amount : 0;
+}
+
+function staleStage(o: Record<string, any>, expected?: string)  
  {
   return conflict('conflict/stale-state', `${o.orderId} is already at ${ORDER_STAGE_LABEL[o.stage as OrderStage] ?? o.stage}.`, {
     details: { currentStage: o.stage, ...(expected ? { expectedStage: expected } : {}) },
   });
 }
 
-async function defaultRoute(side: 'buy' | 'sell', user: Record<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+async function defaultRoute(side: 'buy' | 'sell', user: Record<string, any>) {  
   const place = user.country ?? 'KE';
   return side === 'sell'
     ? {
@@ -134,8 +140,8 @@ export const orderRoutes: AdminRouteDef[] = [
 
     let mineral: { id?: string; name: string };
     let grade: string | undefined;
-    let quantity = body.side === 'sell' ? body.declaredQuantity : body.quantity;
-    let listing: Record<string, any> | null = null; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const quantity = body.side === 'sell' ? body.declaredQuantity : body.quantity;
+    let listing: Record<string, any> | null = null;  
 
     if (body.side === 'buy') {
       if (!body.listingId || !body.quantity) {
@@ -170,16 +176,6 @@ export const orderRoutes: AdminRouteDef[] = [
       }
     }
 
-    // Price: buy = listing ask, sell = current desk buy rate for that mineral.
-    let lockedRate: StoredUnitPrice | undefined;
-    if (listing) {
-      lockedRate = listing.askPrice as StoredUnitPrice;
-    } else {
-      const rate = await Rate.findOne({ mineral: mineral.name, ...(grade ? { grade } : {}) }).lean();
-      lockedRate = (rate?.buy as StoredUnitPrice | undefined) ?? undefined;
-    }
-    const value = lockedRate ? priceTimesQuantity(lockedRate, quantity!) : undefined;
-
     const orderId = await nextId(body.side === 'sell' ? 'orderSell' : 'orderBuy');
     const now = new Date();
     const route_ = await defaultRoute(body.side, user);
@@ -209,8 +205,6 @@ export const orderRoutes: AdminRouteDef[] = [
             stageEnteredAt: now,
             openedAt: now,
             agentId,
-            value,
-            lockedRate,
             escrowRef: body.side === 'buy' ? `ESC-${orderId}` : undefined,
             origin: body.side === 'sell' ? user.org || user.name : 'Mineral Bridge vault',
             destination: body.side === 'sell' ? 'Mineral Bridge vault' : user.org || user.name,
@@ -246,6 +240,24 @@ export const orderRoutes: AdminRouteDef[] = [
     res.json(await mapOrderDetail(o));
   }),
 
+  route(142, 'POST /orders/:orderId/price', ['orders', 'edit'], async (req, res) => {
+    const orderId = String(req.params.orderId);
+    const body = req.body as { unitPrice: { amount: number; currency: 'USD' | 'KES' | 'BTC'; per: 'kg' | 't' | 'g' | 'oz' }; note?: string };
+    const result = await confirmAgreedPrice({
+      orderId,
+      unitPrice: body.unitPrice,
+      note: body.note,
+      actor: auditActor(req),
+      req,
+    });
+    res.json(action(await mapOrderDetail(result.order), result.message, result.auditId));
+  }, {
+    body: z.object({
+      unitPrice: adminUnitPriceSchema.refine((price) => price.amount > 0, { message: 'Enter a price greater than 0', path: ['amount'] }),
+      note: z.string().trim().max(1000).optional(),
+    }),
+  }),
+
   route(27, 'POST /orders/:orderId/advance', ['orders', 'edit'], async (req, res) => {
     const orderId = String(req.params.orderId);
     const { expectedStage, note } = req.body as { expectedStage: OrderStage; note?: string };
@@ -261,10 +273,44 @@ export const orderRoutes: AdminRouteDef[] = [
     const next = ORDER_STAGES[stageIndex(o.stage) + 1]!;
     const actor = auditActor(req);
 
-    let offer: Record<string, any> | null = null; // eslint-disable-line @typescript-eslint/no-explicit-any
+    let offer: Record<string, any> | null = null;  
+    if (stageIndex(o.stage) >= stageIndex('pricing_confirmation') && !orderPriceVisible(o)) {
+      throw new AppError({
+        status: 422,
+        code: 'rule/price-not-confirmed',
+        message: 'Confirm the price agreed with the customer before moving this order past Pricing confirmation.',
+      });
+    }
+    if (o.stage === 'verification') {
+      const docs = (o.documents ?? []) as Array<{ status?: string }>;
+      if (o.side === 'sell' && o.listingId && docs.length === 0) {
+        throw new AppError({
+          status: 422,
+          code: 'rule/documents-required',
+          message: 'This sell order needs the listing photos before verification can be completed.',
+        });
+      }
+      if (docs.some((doc) => doc.status === 'rejected')) {
+        throw new AppError({
+          status: 422,
+          code: 'rule/documents-rejected',
+          message: 'Rejected documents must be replaced before verification can be completed.',
+        });
+      }
+    }
     if (next === 'payment_released' && o.side === 'sell') {
+      const blocking = await Offer.findOne({ orderId, status: { $in: ['pending', 'held'] } }).lean();
+      if (blocking) {
+        throw new AppError({ status: 422, code: 'rule/offer-not-approved', message: 'A firm offer must be approved before payment can be released.' });
+      }
       offer = await Offer.findOne({ orderId, status: { $in: ['approved', 'adjusted', 'sent'] } }).sort({ createdAt: -1 }).lean();
-      if (!offer) throw new AppError({ status: 422, code: 'rule/offer-not-approved', message: 'A firm offer must be approved before payment can be released.' });
+    }
+    if (next === 'payment_released' && storedMinor((offer?.amount as unknown) ?? o.value) <= 0) {
+      throw new AppError({
+        status: 422,
+        code: 'rule/payment-amount-missing',
+        message: 'Confirm the agreed price before payment can be released.',
+      });
     }
     if (next === 'custody_transfer') {
       const paid = await Settlement.findOne({ 'ref.id': orderId, status: 'released', kind: { $in: ['seller_payout', 'buy_settlement'] } }).lean();
@@ -280,23 +326,24 @@ export const orderRoutes: AdminRouteDef[] = [
 
     const { updated, auditId } = await withTx(async (session) => {
       const set: Record<string, unknown> = { stage: next, stageEnteredAt: now, stagePausedMs: 0 };
+      if (o.stage === 'verification' && (o.documents ?? []).length) {
+        set.documents = (o.documents as Array<Record<string, unknown>>).map((doc) => ({ ...doc, status: 'verified' }));
+      }
       if (o.stage === 'inspection_approval') set.assayStatus = 'approved';
       if (next === 'payment_released') {
         const amount = (offer?.amount as typeof o.value | undefined) ?? o.value;
-        if (amount) {
-          await createSettlement({
-            kind: o.side === 'sell' ? 'seller_payout' : 'buy_settlement',
-            ref: { type: 'order', id: orderId },
-            partyId: o.counterpartyId,
-            amount,
-            status: 'released',
-            rail: 'bank',
-            escrowRef: o.escrowRef,
-            createdBy: actor.staffId,
-            session,
-          });
-          set.releasedAmount = amount;
-        }
+        await createSettlement({
+          kind: o.side === 'sell' ? 'seller_payout' : 'buy_settlement',
+          ref: { type: 'order', id: orderId },
+          partyId: o.counterpartyId,
+          amount,
+          status: 'released',
+          rail: 'bank',
+          escrowRef: o.escrowRef,
+          createdBy: actor.staffId,
+          session,
+        });
+        set.releasedAmount = amount;
         set.paymentStatus = 'released';
       }
       if (lotId) set.lotId = lotId;
@@ -478,7 +525,7 @@ export const orderRoutes: AdminRouteDef[] = [
         filter,
         sort: { createdAt: 1, _id: 1 },
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const [users, files] = await Promise.all([loadUserMap(docs.map((d) => d.userId)), loadFileRefs(docs.flatMap((d) => d.photoFileIds ?? []))]);
           return docs.map((d) => ({
             id: d.intakeId,
@@ -546,6 +593,8 @@ export const orderRoutes: AdminRouteDef[] = [
             agentId: actor.staffId,
             value: deskPrice,
             lockedRate: intake.liveRate,
+            priceConfirmedAt: now,
+            priceConfirmedBy: actor.staffId,
             origin: user.org || user.name,
             destination: 'Mineral Bridge vault',
             route: await defaultRoute('sell', user),

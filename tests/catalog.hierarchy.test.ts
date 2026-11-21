@@ -124,7 +124,9 @@ describe('catalog hierarchy import', () => {
     const precious = (tree.body.categories as { name: string; subcategories: { name: string; mineralTypes: { name: string; productForms: { name: string }[] }[] }[] }[])
       .find((c) => c.name === 'Precious Metal');
     expect(precious?.subcategories.map((s) => s.name).sort()).toEqual(['Gold', 'Platinum', 'Silver']);
-    expect(precious?.subcategories.find((s) => s.name === 'Gold')?.mineralTypes[0]?.productForms).toHaveLength(11);
+    const goldForms = precious?.subcategories.find((s) => s.name === 'Gold')?.mineralTypes[0]?.productForms as { name: string; productId?: string | null }[] | undefined;
+    expect(goldForms).toHaveLength(11);
+    expect(goldForms?.find((form) => form.name === 'Gold Bullion Bars')?.productId).toBe(bullion?._id);
 
     const lots = await request(app).get('/v1/lots').query({ category: 'precious-metal', subcategory: 'precious-metal-gold', type: goldType, productForm: bullion!.productFormSlug, q: 'Bullion' }).set(WEB);
     expect(lots.status).toBe(200);

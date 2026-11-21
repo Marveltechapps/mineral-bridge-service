@@ -47,12 +47,45 @@ export const BANNER_PLACEMENTS = [
   'email_strip',
 ] as const;
 export const BANNER_KINDS = ['hero', 'secondary', 'promo_card', 'category', 'email'] as const;
-export const PARTNER_TYPES = ['bonded_carrier', 'inspection_hub', 'lab_assay'] as const;
+/** Legacy partner types kept during migration; new canonical values also accepted. */
+export const PARTNER_TYPES = [
+  'bonded_carrier',
+  'inspection_hub',
+  'lab_assay',
+  'logistics',
+  'inspection_agency',
+  'inspector',
+  'lab',
+] as const;
 export const PARTNER_STATUSES = ['onboarding', 'active', 'under_review', 'suspended'] as const;
 export const TICKET_STATUSES = ['open', 'escalated', 'waiting_on_user', 'resolved'] as const;
-export const AUDIT_CATEGORIES = ['pricing', 'compliance', 'orders', 'vault', 'roles_access', 'content', 'auth', 'financial'] as const;
+export const AUDIT_CATEGORIES = [
+  'pricing',
+  'compliance',
+  'orders',
+  'vault',
+  'roles_access',
+  'content',
+  'auth',
+  'financial',
+  'customers',
+  'catalogue',
+  'inspections',
+  'logistics',
+  'payments',
+  'refunds',
+  'support',
+  'documents',
+  'settings',
+] as const;
 export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
-export const SETTLEMENT_KINDS = ['buy_settlement', 'seller_payout', 'auction_settlement', 'btc_settlement'] as const;
+export const SETTLEMENT_KINDS = [
+  'buy_settlement',
+  'seller_payout',
+  'auction_settlement',
+  'btc_settlement',
+  'refund',
+] as const;
 export const SETTLEMENT_STATUSES = ['released', 'on_hold', 'disputed', 'pending'] as const;
 
 export const LABELS = {
@@ -89,6 +122,10 @@ export const LABELS = {
     ['bonded_carrier', 'Bonded carrier'],
     ['inspection_hub', 'Inspection hub'],
     ['lab_assay', 'Assay lab'],
+    ['logistics', 'Logistics'],
+    ['inspection_agency', 'Inspection agency'],
+    ['inspector', 'Inspector'],
+    ['lab', 'Lab'],
   ],
   buyerAccess: [
     ['all_verified', 'All verified'],

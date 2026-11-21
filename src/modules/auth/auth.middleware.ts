@@ -7,6 +7,7 @@ import {
   findActiveCustomerSession,
   findStaffSessionByToken,
   revokeStaffSession,
+  syncStaffCsrf,
   touchCustomerSession,
   touchStaffSession,
   verifyCsrfToken,
@@ -102,6 +103,14 @@ async function authenticateUser(req: Request, token: string): Promise<void> {
   }
   const user = await userRepository.findById(claims.sub);
   if (!user) throw customerAuthError(claims.cli, 'invalid');
+
+  // Doc 12: suspended customers cannot use authenticated APIs.
+  if (user.accountStatus === 'suspended') {
+    throw forbidden('account/suspended', 'This account is suspended. Contact support.');
+  }
+  if (user.accountStatus === 'closed') {
+    throw forbidden('account/closed', 'This account has been closed.');
+  }
 
   userContexts.set(req, { user, session });
   req.actor = {
@@ -254,7 +263,7 @@ async function loadStaffContext(req: Request): Promise<StaffContext | null> {
     await revokeStaffSession(session.id, 'staff_unavailable', now);
     return null;
   }
-  void touchStaffSession(session.id, now).catch(() => undefined);
+  await touchStaffSession(session.id, session.absoluteExpiresAt, now).catch(() => undefined);
   return { staff, session, sessionToken: token };
 }
 
@@ -307,6 +316,18 @@ export const requireUnlockedConsole: RequestHandler = (req, _res, next) => {
     next(err);
   }
 };
+
+/**
+ * Re-issues `X-CSRF-Token` after the CSRF check. A secret change updates the stored hash
+ * only once this request has already been accepted, so the token the browser just sent
+ * still matches. The client stores the header and uses it on the next mutation.
+ */
+export const attachStaffCsrf: RequestHandler = asyncHandler(async (req, res) => {
+  const ctx = getStaffContext(req);
+  const csrfToken = await syncStaffCsrf(ctx.session, ctx.sessionToken);
+  if (req.actor?.kind === 'staff') req.actor.csrfTokenHash = ctx.session.csrfTokenHash;
+  res.setHeader('X-CSRF-Token', csrfToken);
+});
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 

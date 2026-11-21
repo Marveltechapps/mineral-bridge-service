@@ -94,7 +94,7 @@ export const auctionRoutes: AdminRouteDef[] = [
         filter,
         sort: sortSpec(req, AUCTION_SORT, status === 'ended' ? { endsAt: -1, _id: 1 } : { endsAt: 1, _id: 1 }),
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const users = await loadUserMap(docs.flatMap((d) => [d.leaderId, d.winnerId]));
           return docs.map((d) => auctionSummary(d, users));
         },

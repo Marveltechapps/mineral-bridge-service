@@ -110,11 +110,35 @@ export const auctionsService = {
   },
 
   /** Admin/system status change guarded by the state machine (409 on illegal moves). */
+  async extend(auctionId: string, hours: number): Promise<IAuction> {
+    if (!(hours > 0) || hours > 168) {
+      throw unprocessable('hours must be between 0 and 168', { hours: 'invalid' });
+    }
+    const a = await repo.findById(auctionId);
+    if (!a) throw notFound('auction/not-found', 'Auction not found');
+    if (a.status === 'ended' || a.status === 'cancelled' || a.status === 'draft') {
+      throw conflict('auction/not-extendable', 'This auction cannot be extended.');
+    }
+    const closesAt = new Date(a.closesAt.getTime() + hours * 3_600_000);
+    const updated = await repo.cas(
+      { _id: a._id, version: a.version },
+      { $set: { closesAt }, $inc: { version: 1, extensions: 1 } },
+    );
+    if (!updated) throw conflict('auction/concurrent-update', 'Auction changed; retry');
+    auctionHub.extended({ auctionId: a._id, closesAt: updated.closesAt.toISOString(), version: updated.version });
+    return updated;
+  },
+
   async transition(auctionId: string, to: AuctionStatus): Promise<IAuction> {
     const a = await repo.findById(auctionId);
     if (!a) throw notFound('auction/not-found', 'Auction not found');
     auctionMachine.assert(a.status, to);
-    const updated = await repo.cas({ _id: a._id, version: a.version, status: a.status }, { $set: { status: to }, $inc: { version: 1 } });
+    // Opening or closing by hand moves the clock to now, so the stored status and the clock agree.
+    const at = now();
+    const set: Record<string, unknown> = { status: to };
+    if (to === 'live' && a.opensAt > at) set.opensAt = at;
+    if (to === 'ended' && a.closesAt > at) set.closesAt = at;
+    const updated = await repo.cas({ _id: a._id, version: a.version, status: a.status }, { $set: set, $inc: { version: 1 } });
     if (!updated) throw conflict('auction/concurrent-update', 'Auction changed; retry');
     return updated;
   },

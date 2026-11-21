@@ -2,8 +2,31 @@ import mongoose, { Schema } from 'mongoose';
 import type { IndexDefinition, IndexOptions, Model, SchemaOptions } from 'mongoose';
 import { opaqueId } from '../common/utils/ids.js';
 
+export type {
+  ActorRef,
+  ActionPermission,
+  EntityRef,
+  QtyDoc,
+  QtyMeasure,
+  QtyUnit,
+  RoleKey,
+  UnitPriceDoc,
+} from './schema-primitives.js';
+export {
+  ACTION_PERMISSIONS,
+  BUYER_TYPES,
+  HOLD_TYPES,
+  ROLE_KEYS,
+  SELLER_TYPES,
+  WORKFLOW_OWNERS,
+  actorRefSchema,
+  entityRefSchema,
+  qtySchema,
+  unitPriceSchema,
+} from './schema-primitives.js';
+
 /** Persisted money: integer minor units + ISO currency. `scale` is derived from the exponent table. */
-export type MoneyDoc = { amountMinor: number; currency: string };
+export type MoneyDoc = { amountMinor: number; currency: string; scale?: number };
 
 export const moneyDef = {
   amountMinor: {
@@ -12,6 +35,7 @@ export const moneyDef = {
     validate: { validator: Number.isSafeInteger, message: 'amountMinor must be a safe integer' },
   },
   currency: { type: String, required: true, default: 'USD' },
+  scale: { type: Number },
 } as const;
 
 export const moneyField = (required = false) => ({
@@ -37,7 +61,7 @@ export function defineModel<I>(
   const modelName = `Cust${name}`;
   const existing = mongoose.models[modelName];
   if (existing) return existing as unknown as Model<I>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const schema = new Schema<any>(definition as any, { timestamps: true, versionKey: false, ...(options.schema as object) });
   for (const [fields, opts] of options.indexes ?? []) schema.index(fields, opts);
   const collection = `cust_${name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()}s`;

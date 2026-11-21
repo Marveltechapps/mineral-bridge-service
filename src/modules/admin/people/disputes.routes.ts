@@ -19,7 +19,7 @@ import { userIdsMatching } from './people.dto.js';
 
 const DISPUTE_SORT: Record<string, string> = { id: 'disputeId', type: 'type', daysOpen: 'openedAt', value: 'valueAtRisk.amountMinor' };
 
-function disputeDto(d: Record<string, any>, users: Map<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function disputeDto(d: Record<string, any>, users: Map<string, any>) {  
   return {
     id: d.disputeId,
     linked: d.linked?.id ? { type: d.linked.type, id: d.linked.id } : null,
@@ -32,7 +32,7 @@ function disputeDto(d: Record<string, any>, users: Map<string, any>) { // eslint
   };
 }
 
-async function disputeDetail(d: Record<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+async function disputeDetail(d: Record<string, any>) {  
   const [users, files, staff] = await Promise.all([loadUserMap([d.partyId]), loadFileRefs(d.attachmentFileIds ?? []), loadStaffMap([d.resolution?.recordedBy])]);
   return {
     ...disputeDto(d, users),
@@ -65,7 +65,7 @@ export const disputeRoutes: AdminRouteDef[] = [
         filter: and(status && { status }, search),
         sort,
         paging: paging(req),
-        map: async (docs: any[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        map: async (docs: any[]) => {  
           const users = await loadUserMap(docs.map((d) => d.partyId));
           return docs.map((d) => disputeDto(d, users));
         },
@@ -80,7 +80,7 @@ export const disputeRoutes: AdminRouteDef[] = [
   route(104, 'GET /disputes/:disputeId/messages', ['compliance', 'view'], async (req, res) => {
     const d = await requireDispute(String(req.params.disputeId));
     const files = await loadFileRefs((d.messages ?? []).flatMap((m: { attachmentFileIds?: string[] }) => m.attachmentFileIds ?? []));
-    res.json({ data: (d.messages ?? []).map((m: Record<string, any>) => messageDto(m, files)) }); // eslint-disable-line @typescript-eslint/no-explicit-any
+    res.json({ data: (d.messages ?? []).map((m: Record<string, any>) => messageDto(m, files)) });  
   }),
 
   route(105, 'POST /disputes/:disputeId/messages', ['compliance', 'edit'], async (req, res) => {
@@ -158,6 +158,6 @@ export const disputeRoutes: AdminRouteDef[] = [
   }, { body: z.object({ note: z.string().trim().max(1000).optional() }).default({}) }),
 ];
 
-function messageDto(m: Record<string, any>, files: Map<string, any>) { // eslint-disable-line @typescript-eslint/no-explicit-any
+function messageDto(m: Record<string, any>, files: Map<string, any>) {  
   return { id: m.id, from: m.from, author: m.author ?? '', text: m.text, at: iso(m.at), ...(m.attachmentFileIds?.length ? { attachments: m.attachmentFileIds.map((id: string) => files.get(id) ?? { id }) } : {}) };
 }

@@ -23,4 +23,19 @@ export const references = {
   asm: async () => `MB-ASM-${pad((await nextSequence('asm')) + 60000, 5)}`,
   withdrawal: async () => `MB-W-${pad((await nextSequence('withdrawal')) + 70000, 5)}`,
   certificate: async () => `MB-CERT-${pad((await nextSequence('certificate')) + 80000, 5)}`,
+  /** Customer public numbers start at C-5001 (doc 11 / counters). */
+  customerNo: async () => `C-${(await nextSequence('customer-no')) + 5000}`,
+  kyc: async () => {
+    const yy = String(new Date().getUTCFullYear()).slice(-2);
+    return `MB-KYC-${yy}-${pad(await nextSequence('kyc-ref'), 4)}`;
+  },
+  refund: async () => {
+    const yy = String(new Date().getUTCFullYear()).slice(-2);
+    return `MB-RF-${yy}-${pad(await nextSequence('refund'), 4)}`;
+  },
+  document: async (prefix = 'DOC') => {
+    const yy = String(new Date().getUTCFullYear()).slice(-2);
+    return `${prefix}-${yy}-${pad(await nextSequence(`doc-${prefix}`), 5)}`;
+  },
+  variation: async () => `PV-${pad(await nextSequence('price-variation'), 6)}`,
 };

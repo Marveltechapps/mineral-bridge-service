@@ -8,10 +8,12 @@ import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 import YAML from 'yaml';
 import { createAdminRouter } from './app-clients/admin/routes.js';
+import { createV2AdminRouter } from './app-clients/v2/admin.routes.js';
+import { createV2Router } from './app-clients/v2/routes.js';
 import { badRequest, AppError } from './common/errors/app-error.js';
 import { errorHandler, notFoundHandler } from './common/middleware/error-handler.js';
 import { requestContext } from './common/middleware/request-context.js';
-import { buildCorsOptions } from './config/cors.js';
+import { buildCorsDelegate } from './config/cors.js';
 import { isDatabaseReady } from './config/database.js';
 import { loadEnv } from './config/env.js';
 import { helmetOptions } from './config/security.js';
@@ -33,6 +35,8 @@ const bodyErrors: ErrorRequestHandler = (err, _req, _res, next) => {
   const e = err as { type?: string; status?: number };
   if (e?.type === 'entity.parse.failed') return next(badRequest('request/malformed', 'Request body is not valid JSON'));
   if (e?.type === 'entity.too.large') return next(new AppError({ status: 413, code: 'request/too-large', message: 'Request body is too large' }));
+  // Express raises a URIError (status 400) for a path segment that is not valid percent-encoding.
+  if (err instanceof URIError && e?.status === 400) return next(badRequest('request/malformed-path', 'The request path is not valid URL encoding'));
   return next(err);
 };
 
@@ -43,7 +47,7 @@ export function createApp(): Express {
   if (env.NODE_ENV === 'production') app.set('trust proxy', 1);
 
   app.use(helmet(helmetOptions));
-  app.use(cors(buildCorsOptions()));
+  app.use(cors(buildCorsDelegate()));
   app.use(requestContext);
   app.use(cookieParser());
   app.use(express.json({ limit: '1mb' }));
@@ -78,6 +82,11 @@ export function createApp(): Express {
   app.use(storageRouter);
   app.use('/v1', buildV1Router());
   app.use('/admin/v1', createAdminRouter());
+  // Doc 07: new contract namespaces (legacy /v1 and /admin/v1 preserved).
+  // Admin is mounted first. `/v2` is a prefix of `/v2/admin`, so the customer router
+  // must not be given a chance to reject the admin client header.
+  app.use('/v2/admin', createV2AdminRouter());
+  app.use('/v2', createV2Router());
 
   app.use(notFoundHandler);
   app.use(bodyErrors);

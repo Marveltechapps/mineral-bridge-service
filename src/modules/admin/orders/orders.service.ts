@@ -6,6 +6,22 @@ import { oneOf, searchFilter, iso } from '../shared/http.js';
 import { outMoney, outQty, outUnitPrice } from '../shared/money.js';
 import { loadPartnerMap, loadStaffMap, loadUserMap, partyFrom, staffFrom } from '../shared/refs.js';
 
+/** A catalog or quote total is not a price. Money is visible after the desk confirms it, or after payment has already moved. */
+export function orderPriceVisible(o: object): boolean {
+  const row = o as { priceConfirmedAt?: unknown; paymentStatus?: unknown };
+  return Boolean(row.priceConfirmedAt) || row.paymentStatus === 'released';
+}
+
+/** Orders whose stored value may be summed into GMV, lifetime value, and sold-volume figures. */
+export const CONFIRMED_ORDER_PRICE: Record<string, unknown> = {
+  $or: [{ priceConfirmedAt: { $type: 'date' } }, { paymentStatus: 'released' }],
+};
+
+function publishedPrice(o: { value?: unknown; lockedRate?: unknown; priceConfirmedAt?: Date | null; paymentStatus?: string | null }) {
+  if (!orderPriceVisible(o)) return { value: null, lockedRate: null, priceConfirmed: false as const };
+  return { value: outMoney(o.value as never), lockedRate: outUnitPrice(o.lockedRate as never), priceConfirmed: true as const };
+}
+
 export const STAGE_DESCRIPTION: Record<OrderStage, string> = {
   verification: 'KYC, counterparty and consignment details checked',
   pricing_confirmation: 'Rate locked and firm offer confirmed',
@@ -57,7 +73,7 @@ export async function buildOrderFilter(query: Record<string, unknown>): Promise<
   return { filter, noStage: base };
 }
 
-export async function mapOrderSummaries(docs: any[]) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export async function mapOrderSummaries(docs: any[]) {  
   const [users, staff] = await Promise.all([loadUserMap(docs.map((d) => d.counterpartyId)), loadStaffMap(docs.map((d) => d.agentId))]);
   return docs.map((o) => ({
     id: o.orderId,
@@ -71,8 +87,8 @@ export async function mapOrderSummaries(docs: any[]) { // eslint-disable-line @t
     openedAt: iso(o.openedAt),
     status: o.status,
     customerStatus: o.customerStatus || o.status,
-    value: outMoney(o.value),
-    lockedRate: outUnitPrice(o.lockedRate),
+    ...publishedPrice(o),
+    priceEditable: o.status === 'active' && o.paymentStatus !== 'released' && o.stage !== 'payment_released' && o.stage !== 'custody_transfer',
     settlementMethod: o.settlementMethod || '',
     mineralForm: o.mineralForm || '',
     location: o.origin || '',
@@ -83,7 +99,7 @@ export async function mapOrderSummaries(docs: any[]) { // eslint-disable-line @t
 
 const KYC_FROM_STATUS: Record<string, string> = { verified: 'verified', in_review: 'in_review', expiring: 'expiring', rejected: 'rejected', suspended: 'rejected' };
 
-export async function mapOrderDetail(o: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+export async function mapOrderDetail(o: any) {  
   const idx = stageIndex(o.stage);
   const partnerIds = [o.carrierId, o.hubId, o.labId];
   const histActors = (o.history ?? []).map((h: { actorId?: string }) => h.actorId);
@@ -123,8 +139,9 @@ export async function mapOrderDetail(o: any) { // eslint-disable-line @typescrip
       stops: stops.map((s, k) => ({ kind: s.kind, name: s.name, place: s.place, state: k < doneUpTo ? 'done' : k === doneUpTo ? 'current' : 'upcoming', note: s.note ?? '' })),
     },
     facts: {
-      value: outMoney(o.value),
-      lockedRate: outUnitPrice(o.lockedRate),
+      value: publishedPrice(o).value,
+      lockedRate: publishedPrice(o).lockedRate,
+      priceConfirmed: publishedPrice(o).priceConfirmed,
       assayStatus: o.assayStatus,
       paymentStatus: o.paymentStatus,
       ...(o.releasedAmount ? { releasedAmount: outMoney(o.releasedAmount) } : {}),
