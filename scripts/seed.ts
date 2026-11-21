@@ -17,6 +17,8 @@ import { Rate, RateHistory } from '../src/models/trading.models.js';
 import { Role } from '../src/modules/auth/auth.models.js';
 import { ensureSettings } from '../src/modules/admin/settings/settings.service.js';
 import { parseUnitPrice } from '../src/modules/admin/shared/money.js';
+import { quotedPriceToE4PerGram } from '../src/common/utils/pricing-math.js';
+import { CategoryModel, MineralTypeModel, ProductFormModel, ProductModel, SubcategoryModel } from '../src/models/catalog.model.js';
 import { Bank, Country, Mineral, MineralCategory, Unit } from '../src/modules/reference/reference.model.js';
 import { DEFAULT_ROLES } from '../src/modules/staff/default-roles.js';
 import { ensureBootstrapAdmin } from '../src/modules/staff/staff.service.js';
@@ -129,15 +131,18 @@ async function seedRoles(): Promise<void> {
 async function seedRates(): Promise<void> {
   const now = Date.now();
   for (const [rateId, mineral, grade, buy, sell] of RATES) {
-    if (await Rate.exists({ rateId })) continue;
     const mineralId = MINERALS.find((m) => m[1] === mineral)?.[0];
     // Desk prices sit 1 % inside the feed on both sides until someone overrides them.
-    await Rate.create({ rateId, mineralId, mineral, grade, per: 'kg', feedBuy: money(buy), feedSell: money(sell), buy: money(buy), sell: money(sell), source: 'market_feed', feedSyncedAt: new Date(now), trend24hPct: 0 });
+    if (!(await Rate.exists({ rateId }))) {
+      await Rate.create({ rateId, mineralId, mineral, grade, per: 'kg', feedBuy: money(buy), feedSell: money(sell), buy: money(buy), sell: money(sell), source: 'market_feed', feedSyncedAt: new Date(now), trend24hPct: 0 });
+    }
+    if (await RateHistory.exists({ rateId })) continue;
     const history = Array.from({ length: 30 }, (_, i) => {
       const day = 29 - i;
       const drift = 1 + Math.sin((i + rateId.length) / 4) * 0.012;
-      const b = money(buy * drift);
-      const s = money(sell * drift);
+      const cents = (n: number) => Number((n * drift).toFixed(2));
+      const b = money(cents(buy));
+      const s = money(cents(sell));
       return { rateId, at: new Date(now - day * 86_400_000), buyMinor: b.amountMinor, sellMinor: s.amountMinor, currency: 'USD', scale: 2, per: 'kg' };
     });
     await RateHistory.insertMany(history);
@@ -152,6 +157,145 @@ async function seedAcademy(): Promise<void> {
     { lessonId: 'LSN-0001', courseId: 'CRS-0001', title: 'The marketplace in five minutes', position: 1, media: 'video_transcript', body: 'Welcome to Mineral Bridge…', status: 'published' },
     { lessonId: 'LSN-0002', courseId: 'CRS-0001', title: 'Tiers, KYC and limits', position: 2, media: 'text', body: 'Tier 1 can browse; Tier 2 can trade; Tier 3 unlocks auctions…', status: 'published' },
   ]);
+}
+
+/** Marketplace lots the web and mobile catalogues read from `/v2/catalogue`. Idempotent on slug / reference. */
+const CATALOGUE: Array<{
+  categorySlug: string;
+  categoryName: string;
+  categoryImage: string;
+  subcategorySlug: string;
+  subcategoryName: string;
+  typeSlug: string;
+  typeName: string;
+  mineralCode: string;
+  formSlug: string;
+  formName: string;
+  reference: string;
+  name: string;
+  grade: string;
+  purity: string;
+  country: string;
+  region: string;
+  site: string;
+  grams: number;
+  minGrams: number;
+  /** USD per kilogram. */
+  usdPerKg: number;
+  imageName: string;
+  description: string;
+}> = [
+  ['precious-metals', 'Precious metals', 'cat-precious', 'gold', 'Gold', 'gold-dore', 'Gold Doré', 'AU', 'dore-bar', 'Doré bar', 'MBV-AU-DORE-01', 'Ashanti gold doré bar', '90%+ Au', '92.4% Au', 'GH', 'Ashanti', 'Obuasi', 12_400, 100, 69_800, 'gold-dore', 'Poured doré from a licensed Ghanaian producer. Weight and fineness checked at the vault.'],
+  ['precious-metals', 'Precious metals', 'cat-precious', 'gold', 'Gold', 'gold-concentrate', 'Gold Concentrate', 'AU', 'gold-concentrate', 'Concentrate', 'MBV-AU-CONC-01', 'Geita gold concentrate', '85%+ Au', '86.1% Au', 'TZ', 'Geita', 'Geita', 250_000, 1_000, 63_900, 'gold-concentrate', 'Gravity concentrate, bagged and sealed. Assay report available with the lot.'],
+  ['precious-metals', 'Precious metals', 'cat-precious', 'gold', 'Gold', 'gold-bullion', 'Gold Bullion', 'AU', 'bullion', 'Bullion', 'MBV-AU-BULL-01', 'Rand gold bullion', '99.5% Au', '99.5% Au', 'ZA', 'Gauteng', 'Johannesburg', 8_000, 100, 72_100, 'gold-bullion', 'Small-bar bullion held in a bonded vault. Suitable for refinery and investor buyers.'],
+  ['precious-metals', 'Precious metals', 'cat-precious', 'silver', 'Silver', 'silver-concentrate', 'Silver Concentrate', 'AG', 'silver-concentrate', 'Concentrate', 'MBV-AG-CONC-01', 'Taxco silver concentrate', '>90% Ag', '91.2% Ag', 'MX', 'Guerrero', 'Taxco', 400_000, 5_000, 835, 'm-silver', 'Flotation concentrate from a registered mill. Moisture and penalty elements disclosed.'],
+  ['base-metals', 'Base metals', 'cat-industrial', 'copper', 'Copper', 'copper-cathode', 'Copper Cathode', 'CU', 'cathode', 'Cathode', 'MBV-CU-CATH-01', 'Copperbelt cathode', 'Grade A (99.99%)', '99.99% Cu', 'ZM', 'Copperbelt', 'Kitwe', 5_000_000, 25_000, 9.7, 'cat-industrial', 'LME-grade cathode, strapped bundles. Ready for export from the bonded yard.'],
+  ['base-metals', 'Base metals', 'cat-industrial', 'tin', 'Tin', 'tin-concentrate', 'Tin Concentrate', 'SN', 'tin-concentrate', 'Concentrate', 'MBV-SN-CONC-01', 'Jos tin concentrate', '65% Sn', '67% Sn', 'NG', 'Plateau', 'Jos', 80_000, 1_000, 29.8, 'cat-industrial', 'Alluvial tin concentrate, dried and bagged. Export permit on file.'],
+  ['battery-minerals', 'Battery & critical minerals', 'cat-critical', 'cobalt', 'Cobalt', 'cobalt-hydroxide', 'Cobalt Hydroxide', 'CO', 'hydroxide', 'Hydroxide', 'MBV-CO-HYD-01', 'Kolwezi cobalt hydroxide', '30% Co', '32% Co', 'CD', 'Lualaba', 'Kolwezi', 1_200_000, 10_000, 16.2, 'cat-critical', 'Crude hydroxide from a traceable cooperative. Moisture and payability stated on the assay.'],
+  ['battery-minerals', 'Battery & critical minerals', 'cat-critical', 'lithium', 'Lithium', 'lithium-spodumene', 'Lithium Spodumene', 'LI', 'spodumene', 'Spodumene', 'MBV-LI-SPO-01', 'Bikita spodumene', '6% Li2O', '6.1% Li2O', 'ZW', 'Masvingo', 'Bikita', 8_000_000, 50_000, 1.15, 'cat-critical', 'SC6 spodumene concentrate in bulk bags. Sampling certificate attached to the lot.'],
+  ['battery-minerals', 'Battery & critical minerals', 'cat-critical', 'coltan', 'Coltan', 'coltan-tantalite', 'Coltan (Tantalite)', 'TA', 'tantalite', 'Tantalite', 'MBV-TA-COL-01', 'Kigali tantalite', '30% Ta2O5', '31% Ta2O5', 'RW', 'Kigali', 'Kigali', 180_000, 1_000, 94, 'cat-critical', 'Hand-sorted tantalite. Chain-of-custody documents travel with the shipment.'],
+  ['gemstones', 'Gemstones', 'cat-gemstone', 'emerald', 'Emerald', 'emerald-rough', 'Emerald (rough)', 'EM', 'emerald-rough', 'Rough', 'MBV-EM-RGH-01', 'Kagem rough emerald', 'AA', 'AA', 'ZM', 'Copperbelt', 'Kagem', 1_500, 50, 420_000, 'cat-gemstone', 'Rough emerald parcel, individually weighed. Not a treated stone.'],
+  ['gemstones', 'Gemstones', 'cat-gemstone', 'tanzanite', 'Tanzanite', 'tanzanite-rough', 'Tanzanite (rough)', 'TZ', 'tanzanite-rough', 'Rough', 'MBV-TZ-RGH-01', 'Merelani tanzanite', 'AA', 'AA', 'TZ', 'Manyara', 'Merelani', 800, 20, 610_000, 'cat-gemstone', 'Rough tanzanite from the Merelani block. Parcel weight is the sellable quantity.'],
+  ['industrial-minerals', 'Industrial minerals', 'cat-industrial', 'graphite', 'Graphite', 'graphite-flake', 'Graphite', 'GR', 'flake', 'Flake', 'MBV-GR-FLK-01', 'Balama flake graphite', '94% C', '94.6% C', 'MZ', 'Cabo Delgado', 'Balama', 12_000_000, 100_000, 0.85, 'cat-industrial', 'Natural flake graphite, jumbo and large flake. Packed for industrial offtake.'],
+].map((row) => {
+  const [categorySlug, categoryName, categoryImage, subcategorySlug, subcategoryName, typeSlug, typeName, mineralCode, formSlug, formName, reference, name, grade, purity, country, region, site, grams, minGrams, usdPerKg, imageName, description] = row;
+  return { categorySlug, categoryName, categoryImage, subcategorySlug, subcategoryName, typeSlug, typeName, mineralCode, formSlug, formName, reference, name, grade, purity, country, region, site, grams, minGrams, usdPerKg, imageName, description };
+});
+
+async function seedCatalogue(): Promise<number> {
+  const sampleRefs = CATALOGUE.map((lot) => lot.reference);
+  const sampleCategories = [...new Set(CATALOGUE.map((lot) => lot.categorySlug))];
+  // A synced sheet catalogue is the live data. Sample lots are only for an empty database.
+  if (await ProductModel.exists({ status: 'active', reference: { $nin: sampleRefs } })) {
+    await ProductModel.deleteMany({ reference: { $in: sampleRefs } });
+    await CategoryModel.deleteMany({ slug: { $in: sampleCategories } });
+    await SubcategoryModel.deleteMany({ categorySlug: { $in: sampleCategories } });
+    await MineralTypeModel.deleteMany({ categorySlug: { $in: sampleCategories } });
+    await ProductFormModel.deleteMany({ categorySlug: { $in: sampleCategories } });
+    return 0;
+  }
+  const categories = new Map<string, { name: string; image: string; sort: number }>();
+  const subcategories = new Map<string, { name: string; categorySlug: string; image: string; sort: number }>();
+  const types = new Map<string, { name: string; categorySlug: string; subcategorySlug: string; mineralCode: string; image: string; sort: number }>();
+  const forms = new Map<string, { name: string; categorySlug: string; subcategorySlug: string; mineralTypeSlug: string; image: string; sort: number }>();
+  for (const lot of CATALOGUE) {
+    if (!categories.has(lot.categorySlug)) categories.set(lot.categorySlug, { name: lot.categoryName, image: lot.categoryImage, sort: categories.size });
+    if (!subcategories.has(lot.subcategorySlug)) subcategories.set(lot.subcategorySlug, { name: lot.subcategoryName, categorySlug: lot.categorySlug, image: lot.imageName, sort: subcategories.size });
+    if (!types.has(lot.typeSlug)) types.set(lot.typeSlug, { name: lot.typeName, categorySlug: lot.categorySlug, subcategorySlug: lot.subcategorySlug, mineralCode: lot.mineralCode, image: lot.imageName, sort: types.size });
+    if (!forms.has(lot.formSlug)) forms.set(lot.formSlug, { name: lot.formName, categorySlug: lot.categorySlug, subcategorySlug: lot.subcategorySlug, mineralTypeSlug: lot.typeSlug, image: lot.imageName, sort: forms.size });
+  }
+  const image = (name: string) => ({ imageName: name, imageUrl: `/assets/m4/${name}.png` });
+  for (const [slug, row] of categories) {
+    await CategoryModel.updateOne({ slug }, { $set: { name: row.name, sort: row.sort, active: true, ...image(row.image) } }, { upsert: true });
+  }
+  for (const [slug, row] of subcategories) {
+    await SubcategoryModel.updateOne({ slug }, { $set: { name: row.name, categorySlug: row.categorySlug, sort: row.sort, active: true, ...image(row.image) } }, { upsert: true });
+  }
+  for (const [slug, row] of types) {
+    await MineralTypeModel.updateOne(
+      { slug },
+      { $set: { name: row.name, categorySlug: row.categorySlug, subcategorySlug: row.subcategorySlug, mineralCode: row.mineralCode, sellable: true, tiers: [1, 2, 3], sort: row.sort, active: true, ...image(row.image) } },
+      { upsert: true },
+    );
+  }
+  for (const [slug, row] of forms) {
+    await ProductFormModel.updateOne(
+      { slug },
+      { $set: { name: row.name, categorySlug: row.categorySlug, subcategorySlug: row.subcategorySlug, mineralTypeSlug: row.mineralTypeSlug, sort: row.sort, active: true, sourceSheet: false, ...image(row.image) } },
+      { upsert: true },
+    );
+  }
+  for (const lot of CATALOGUE) {
+    await ProductModel.updateOne(
+      { reference: lot.reference },
+      {
+        $set: {
+          name: lot.name,
+          typeSlug: lot.typeSlug,
+          categorySlug: lot.categorySlug,
+          subcategorySlug: lot.subcategorySlug,
+          productFormSlug: lot.formSlug,
+          mineralCode: lot.mineralCode,
+          form: lot.formName,
+          purity: lot.purity,
+          grade: lot.grade,
+          origin: { country: lot.country, region: lot.region, site: lot.site, display: `${lot.site}, ${lot.region}` },
+          seller: { name: 'Mineral Bridge', tier: 'mineral_bridge', verified: true },
+          status: 'active',
+          availableGrams: lot.grams,
+          minOrderGrams: lot.minGrams,
+          stepGrams: lot.minGrams,
+          currency: 'USD',
+          unitPriceMinorE4PerGram: quotedPriceToE4PerGram(lot.usdPerKg, 'kg'),
+          assured: true,
+          verified: true,
+          featured: true,
+          ...image(lot.imageName),
+          description: lot.description,
+          attributes: {
+            unit: 'kg',
+            listPrice: lot.usdPerKg,
+            categoryName: lot.categoryName,
+            subcategoryName: lot.subcategoryName,
+            mineralTypeName: lot.typeName,
+            productFormName: lot.formName,
+            sourceSheet: false,
+          },
+        },
+      },
+      { upsert: true },
+    );
+  }
+  return CATALOGUE.length;
+}
+
+/** Demo stock for published lots that are still at zero, so the storefront is not a wall of sold-out cards. Lots that already have quantity are left alone. */
+async function seedStock(): Promise<number> {
+  const res = await ProductModel.updateMany(
+    { status: 'active', availableGrams: 0 },
+    { $set: { availableGrams: 25_000, minOrderGrams: 1_000, stepGrams: 500 } },
+  );
+  return res.modifiedCount;
 }
 
 async function seedAdmin(): Promise<'created' | 'updated' | 'unchanged'> {
@@ -183,9 +327,11 @@ async function main(): Promise<void> {
   await seedRoles();
   await seedRates();
   await seedAcademy();
+  const lots = await seedCatalogue();
+  const stocked = await seedStock();
   const admin = await seedAdmin();
   logger.info(
-    { admin, email: (process.env.SEED_ADMIN_EMAIL ?? 'ceo@mineralbridge.co.ke').toLowerCase(), database: db.connection.name },
+    { admin, lots, stocked, email: (process.env.SEED_ADMIN_EMAIL ?? 'ceo@mineralbridge.co.ke').toLowerCase(), database: db.connection.name },
     'Seed complete — change the admin password on first sign-in',
   );
   await disconnectDatabase();
