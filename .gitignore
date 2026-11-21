@@ -5,9 +5,11 @@ coverage/
 .env.local
 *.log
 .DS_Store
-uploads/
-tmp/
-reports/
-backups/
+# Runtime data at the repository root only. A bare `uploads/` pattern also
+# ignores src/modules/uploads, so a fresh clone cannot resolve uploads.service.js.
+/uploads/
+/tmp/
+/reports/
+/backups/
 .mongo-data/
 mongodb-memory-server*

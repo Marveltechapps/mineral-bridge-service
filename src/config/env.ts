@@ -8,7 +8,7 @@ loadDotenv();
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().positive().default(4000),
+  PORT: z.coerce.number().int().positive().default(5001),
   HOST: z.string().default('0.0.0.0'),
   LOG_LEVEL: z.string().default('info'),
 
@@ -140,7 +140,7 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === 'true' || v === '1'),
 
-  PUBLIC_API_BASE_URL: z.string().url().default('http://localhost:4000'),
+  PUBLIC_API_BASE_URL: z.string().url().default('http://localhost:5001'),
 
   /** Google Sheets mineral catalog. Leave unset until the sheet is shared with the server. */
   CATALOG_SHEET_ID: z.string().optional(),
@@ -279,9 +279,10 @@ export function loadEnv(): Env {
     process.env.MONGODB_URI = process.env.MONGO_URI;
   }
   // Signed file URLs must hit the process that is actually listening. An unset
-  // public origin follows PORT instead of the historical 4000 default.
+  // public origin follows PORT. The default port is 5001, the same origin the
+  // dashboard probes (API_BASE_URL, default http://127.0.0.1:5001).
   if (!process.env.PUBLIC_API_BASE_URL) {
-    const port = process.env.PORT && /^\d+$/.test(process.env.PORT) ? process.env.PORT : '4000';
+    const port = process.env.PORT && /^\d+$/.test(process.env.PORT) ? process.env.PORT : '5001';
     process.env.PUBLIC_API_BASE_URL = `http://localhost:${port}`;
   }
   persistMissingDevSecrets();

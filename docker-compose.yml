@@ -25,9 +25,12 @@ services:
     build: .
     profiles: ["full"]
     ports:
-      - "4000:4000"
+      - "5001:5001"
     env_file: .env
     environment:
+      # Overrides a stale PORT in .env so the process listens on the published port.
+      PORT: "5001"
+      PUBLIC_API_BASE_URL: "http://localhost:5001"
       MONGODB_URI: mongodb://mongo:27017/mineralbridge?directConnection=true
     depends_on:
       mongo:

@@ -13,7 +13,7 @@ info:
     state-changing POSTs accept `Idempotency-Key` (required on #52, #72, #106; replays carry `Idempotent-Replay: true`);
     money-moving #32, #52, #72, #106 enforce four-eyes (403 `auth/four-eyes`).
 servers:
-  - url: http://localhost:4000
+  - url: http://localhost:5001
     description: Local development
 tags:
   - name: mobile

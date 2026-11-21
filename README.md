@@ -33,8 +33,10 @@ Copy-Item .env.example .env       # then edit secrets; keep MONGODB_URI as in th
 # 3. Dependencies, seed data, dev server
 npm install
 npm run seed
-npm run dev                        # http://localhost:4000  (health: /health, ready: /ready, docs: /docs)
+npm run dev                        # http://127.0.0.1:5001  (health: /health, ready: /ready, docs: /docs)
 ```
+
+`PORT` defaults to **5001** (see `.env.example`). The admin dashboard proxies to `API_BASE_URL`, which defaults to `http://127.0.0.1:5001`. Redis is optional: leave `REDIS_URL` unset for one API process. The process does not listen until MongoDB connects, so `/health` stays down until `docker compose up -d --wait mongo` has succeeded.
 
 Seed with a custom admin password (applies for this PowerShell session only):
 

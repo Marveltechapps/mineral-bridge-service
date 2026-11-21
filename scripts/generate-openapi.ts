@@ -193,7 +193,7 @@ async function main(): Promise<void> {
         'money-moving #32, #52, #72, #106 enforce four-eyes (403 `auth/four-eyes`).',
       ].join('\n'),
     },
-    servers: [{ url: 'http://localhost:4000', description: 'Local development' }],
+    servers: [{ url: 'http://localhost:5001', description: 'Local development' }],
     tags: [
       { name: 'mobile', description: 'Native mobile app (bearer JWT)' },
       { name: 'web', description: 'Customer web app (bearer JWT + refresh cookie)' },
