@@ -137,7 +137,7 @@ const rf = (console2.json.refunds || [])[0];
 const ky = (console2.json.kyc || [])[0];
 const th = (console2.json.threads || [])[0];
 const dn = (console2.json.docs || []).find((d: { no: string }) => d.no === 'CN-ISO-1');
-const del = (console2.json.deliveries || []).find((d: { event?: string }) => /Payment update/i.test(String(d.event || d.title || '')));
+const del = (console2.json.deliveries || []).find((d: { event?: string; title?: string }) => /Payment update/i.test(String(d.event || d.title || '')));
 
 evidence.persisted = {
   lot: { onHold: lot?.onHold, reason: lot?.holdReason },

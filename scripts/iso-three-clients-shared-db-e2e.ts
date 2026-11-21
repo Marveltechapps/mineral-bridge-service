@@ -33,7 +33,7 @@ function pickServer(): Promise<{ server: http.Server; app: Express }> {
   });
 }
 
-async function uploadKyc(agent: request.SuperAgentTest, token: string, client: string, filename: string): Promise<string | null> {
+async function uploadKyc(agent: { post(path: string): request.Test }, token: string, client: string, filename: string): Promise<string | null> {
   const res = await agent
     .post('/v2/files')
     .set('Authorization', `Bearer ${token}`)
@@ -421,7 +421,7 @@ console.log('|------|--------|');
 for (const { area, keys } of summaryRows) {
   const statuses = keys.map((k) => rows.find((r) => r.step === k)?.status ?? 'FAIL');
   const result = statuses.every((s) => s === 'PASS') ? 'PASS' : statuses.some((s) => s === 'PASS') ? 'PARTIAL' : 'FAIL';
-  const failKeys = keys.filter((k, i) => statuses[i] !== 'PASS');
+  const failKeys = keys.filter((_k, i) => statuses[i] !== 'PASS');
   console.log(`| ${area} | ${result}${failKeys.length ? ` (${failKeys.join('; ')})` : ''} |`);
 }
 

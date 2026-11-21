@@ -34,7 +34,7 @@ function pickServer(): Promise<{ server: http.Server; app: Express }> {
 }
 
 async function uploadKyc(
-  agent: request.SuperAgentTest,
+  agent: { post(path: string): request.Test },
   token: string,
   filename: string,
 ): Promise<string | null> {

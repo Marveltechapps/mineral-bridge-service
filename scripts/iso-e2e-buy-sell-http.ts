@@ -10,7 +10,7 @@ const BASE = 'http://127.0.0.1:5011';
 const jar = path.join(os.tmpdir(), 'mb-iso-e2e-cookies.txt');
 const csrfFile = path.join(os.tmpdir(), 'mb-iso-e2e-csrf.txt');
 
-async function raw(method: string, urlPath: string, body?: unknown, headers: Record<string, string> = {}) {
+async function raw(method: string, urlPath: string, body?: unknown, _headers: Record<string, string> = {}) {
   const { spawnSync } = await import('node:child_process');
   const args = ['-sS', '-b', jar, '-c', jar, '-H', 'X-Client: admin', '-H', 'Accept: application/json', '-D', path.join(os.tmpdir(), 'mb-iso-e2e-headers.txt'), '-o', path.join(os.tmpdir(), 'mb-iso-e2e-body.json'), '-w', '%{http_code}'];
   if (method !== 'GET') {
