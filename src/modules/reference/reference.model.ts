@@ -2,7 +2,7 @@ import { Schema } from 'mongoose';
 import { defineModel } from '../../common/db/define-model.js';
 import { moneySchema } from '../../models/shared.js';
 
-/** Shared reference data (web + admin + mobile). Seeded by scripts/seed.ts, edited via DB/ops tooling. */
+/** Shared reference data (web + admin + mobile). Inserted on API startup when missing. */
 
 const categorySchema = new Schema<any>(
   {

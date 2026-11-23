@@ -51,7 +51,7 @@ export interface CatalogSyncReport {
 
 const HEADER_ALIASES: Record<string, string[]> = {
   category: ['category', 'mineral category', 'cat'],
-  subcategory: ['subcategory', 'sub category', 'sub-category', 'sub category name'],
+  subcategory: ['subcategory', 'sub category', 'sub-category', 'sub category name', 'category & sub category name', 'category & subcategory name'],
   mineralType: ['mineral type', 'mineraltype', 'type name'],
   productForm: ['product form', 'product form / variety', 'variety', 'form'],
   name: ['mineral', 'mineral name', 'name', 'product'],
@@ -282,13 +282,13 @@ export function parseCatalogCsv(csv: string): ParsedCatalog {
       imageUrl: imageUrl || null,
       imageName: imageName || null,
     };
-    if (!sourceId && !name) {
+    if (!name) {
       rows.push({
         sourceRow,
-        sourceKey: null,
+        sourceKey: sourceId ? slugify(sourceId) : null,
         mapped: preview,
         status: 'skipped',
-        errors: ['section header'],
+        errors: [sourceId ? 'no mineral name' : 'section header'],
         warnings: [],
       });
       return;
@@ -407,7 +407,12 @@ async function checkImage(url: string, sourceId: string, fetchImpl: typeof fetch
  * Rows already imported from the sheet and absent from a successful file are
  * unpublished (not deleted). Manual records without `attributes.sourceSheet` stay.
  */
-export async function syncCatalogFromCsv(csv: string, source: string, fetchImpl: typeof fetch = fetch): Promise<CatalogSyncReport> {
+export async function syncCatalogFromCsv(
+  csv: string,
+  source: string,
+  fetchImpl: typeof fetch = fetch,
+  options?: { checkImages?: boolean },
+): Promise<CatalogSyncReport> {
   const parsed = parseCatalogCsv(csv);
   const report: CatalogSyncReport = {
     fetchedAt: new Date().toISOString(),
@@ -438,7 +443,7 @@ export async function syncCatalogFromCsv(csv: string, source: string, fetchImpl:
   for (const row of parsed.accepted) {
     seenCategories.set(row.categorySlug, { name: row.category, sort: seenCategories.size });
     seenKeys.add(row.sourceKey);
-    const image = row.imageUrl ? await checkImage(row.imageUrl, row.sourceId, fetchImpl) : undefined;
+    const image = options?.checkImages === false || !row.imageUrl ? undefined : await checkImage(row.imageUrl, row.sourceId, fetchImpl);
     const reportRow = report.rows.find((r) => r.sourceRow === row.sourceRow && r.sourceKey === row.sourceKey);
     if (reportRow && image) {
       reportRow.image = image;
@@ -522,8 +527,7 @@ export async function syncCatalogFromCsv(csv: string, source: string, fetchImpl:
       },
       { upsert: true },
     );
-    const listPrice = row.price ?? 0;
-    const unitPriceMinorE4PerGram = sheetPriceToE4PerGram(listPrice, row.unit);
+    const hasPrice = row.price != null;
     const written = await ProductModel.updateOne(
       { 'attributes.sourceKey': row.sourceKey },
       {
@@ -539,7 +543,7 @@ export async function syncCatalogFromCsv(csv: string, source: string, fetchImpl:
           origin: { country: row.origin === 'unspecified' ? 'unspecified' : row.origin },
           status: 'active',
           currency: 'USD',
-          unitPriceMinorE4PerGram,
+          ...(hasPrice ? { unitPriceMinorE4PerGram: sheetPriceToE4PerGram(row.price as number, row.unit) } : {}),
           imageUrl,
           imageName: row.imageName ?? undefined,
           attributes: {
@@ -547,7 +551,7 @@ export async function syncCatalogFromCsv(csv: string, source: string, fetchImpl:
             sourceKey: row.sourceKey,
             sourceId: row.sourceId,
             unit: row.unit,
-            listPrice,
+            ...(hasPrice ? { listPrice: row.price } : {}),
             categoryName: row.category,
             subcategoryName: row.subcategory,
             mineralTypeName: row.mineralType,
@@ -559,6 +563,7 @@ export async function syncCatalogFromCsv(csv: string, source: string, fetchImpl:
         $setOnInsert: {
           reference: `MBV-SHEET-${row.sourceKey}`.slice(0, 64),
           availableGrams: 0,
+          ...(hasPrice ? {} : { unitPriceMinorE4PerGram: 0 }),
         },
       },
       { upsert: true },

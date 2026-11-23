@@ -61,7 +61,13 @@ export async function isPasswordInHistory(password: string, history: readonly st
 }
 
 export function staffEmailDomains(): string[] {
-  return (process.env.ADMIN_STAFF_EMAIL_DOMAINS ?? 'mineralbridge.co.ke,mineralbridge.com,mineralbridge.co')
+  // ADMIN_STAFF_EMAIL_DOMAINS wins when an older deployment still sets it.
+  // STAFF_EMAIL_DOMAINS is the documented name.
+  const raw =
+    process.env.ADMIN_STAFF_EMAIL_DOMAINS ??
+    process.env.STAFF_EMAIL_DOMAINS ??
+    'mineralbridge.co.ke,mineralbridge.com,mineralbridge.co';
+  return raw
     .split(',')
     .map((d) => d.trim().toLowerCase())
     .filter(Boolean);
@@ -94,6 +100,10 @@ export interface CreateStaffInput {
   /** …or supply an explicit role + permissions (e.g. custom roles later). */
   role?: StaffRoleRef;
   permissions?: Permissions;
+  /** Console role key (`super`, `ops`, …). Omitted on older rows; sign-in still recognises ROLE-CEO. */
+  roleKey?: string;
+  /** Dashboard action list copied onto the staff row at creation. */
+  actions?: string[];
 }
 
 export async function createStaff(input: CreateStaffInput): Promise<StaffRecord> {
@@ -128,6 +138,8 @@ export async function createStaff(input: CreateStaffInput): Promise<StaffRecord>
         desk: input.desk ?? '',
         role,
         permissions,
+        ...(input.roleKey ? { roleKey: input.roleKey } : {}),
+        ...(input.actions ? { actions: input.actions } : {}),
       });
       return toRecord(doc.toObject() as unknown as LeanStaff)!;
     } catch (err) {
@@ -215,18 +227,21 @@ export async function setStaffPassword(staffId: string, newPassword: string): Pr
 }
 
 /**
- * Creates the bootstrap admin, or makes the existing row active with this password and the CEO role.
- * Repeating the call does not add another staff row. Other staff records are left alone.
+ * Creates the bootstrap CEO when that email is absent.
+ * An existing staff row is not modified: password, role, name, phone, and disabled state stay as they are.
+ * A concurrent create that loses the unique-email race is reported as unchanged.
  */
 export async function ensureBootstrapAdmin(input: {
   email: string;
   password: string;
   name: string;
   phone: string;
-}): Promise<'created' | 'updated' | 'unchanged'> {
+  roleKey?: string;
+  actions?: string[];
+}): Promise<'created' | 'unchanged'> {
   const email = input.email.toLowerCase();
-  const existing = await findStaffByEmail(email);
-  if (!existing) {
+  if (await findStaffByEmail(email)) return 'unchanged';
+  try {
     await createStaff({
       email,
       password: input.password,
@@ -234,26 +249,15 @@ export async function ensureBootstrapAdmin(input: {
       phone: input.phone,
       desk: 'Executive',
       roleId: 'ROLE-CEO',
+      roleKey: input.roleKey ?? 'super',
+      actions: input.actions,
     });
     return 'created';
+  } catch (err) {
+    const code = (err as { code?: string | number }).code;
+    if (code === 'conflict/duplicate' || code === 11000) return 'unchanged';
+    throw err;
   }
-  const role = getDefaultRole('ROLE-CEO');
-  if (!role) throw unprocessable('Unknown role.', { roleId: 'Unknown role' });
-  const passwordMatches = Boolean(await verifyCredentials(email, input.password));
-  if (passwordMatches && existing.role.id === role.id && !existing.disabled) return 'unchanged';
-  const $set: Record<string, unknown> = {
-    disabled: false,
-    role: { id: role.id, name: role.name, scope: role.scope },
-    permissions: permissionsForRole(role.id),
-  };
-  if (!passwordMatches) {
-    const passwordHash = await hashPassword(input.password);
-    $set.passwordHash = passwordHash;
-    $set.passwordHistory = [passwordHash];
-    $set.passwordChangedAt = new Date();
-  }
-  await StaffModel.updateOne({ _id: existing.id }, { $set, $unset: { disabledAt: 1 } });
-  return 'updated';
 }
 
 export async function recordStaffLogin(staffId: string, now = new Date()): Promise<void> {

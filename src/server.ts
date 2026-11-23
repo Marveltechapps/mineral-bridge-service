@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { createApp } from './app.js';
+import { initializeDatabase } from './bootstrap/initialize-database.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { loadEnv } from './config/env.js';
 import { logger } from './config/logger.js';
@@ -13,6 +14,7 @@ async function main(): Promise<void> {
   const env = loadEnv();
   assertProductionConfig(env);
   await connectDatabase();
+  await initializeDatabase({ trigger: 'startup', nodeEnv: env.NODE_ENV, mongoUri: env.MONGODB_URI });
   await startRedisRealtimeBridge();
 
   const app = createApp();

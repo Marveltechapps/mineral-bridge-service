@@ -61,6 +61,28 @@ MIN0001,Lithium,Lithium Spodumene Ore,Critical Mineral,Battery metal,https://cdn
     expect(parsed.accepted[0]?.productForm).toBe('Lithium Spodumene Ore');
   });
 
+  it('reads the workbook SKU tab without quantity or price', () => {
+    const csv = `Mineral ID,category & Sub Category Name,Mineral Name,Category,Product Description,Primary Image,Price,Unit,Availability
+MCT1,Precious Metal,,,,,,,
+MSCT1.1,Gold,,,,,,,
+MIN0001,Gold,Gold Concentrate,Precious Metal,Jewellery metal,https://cdn.example/min0001.png,$72 / g,g,
+MIN0012,,,,,,,,
+`;
+    const parsed = parseCatalogCsv(csv);
+    expect(parsed.missingHeaders).toEqual([]);
+    expect(parsed.accepted).toHaveLength(1);
+    expect(parsed.accepted[0]).toMatchObject({
+      sourceId: 'MIN0001',
+      name: 'Gold Concentrate',
+      category: 'Precious Metal',
+      subcategory: 'Gold',
+      unit: 'g',
+      price: 72,
+    });
+    expect(parsed.rows.filter((r) => r.status === 'skipped').map((r) => r.sourceRow)).toEqual([2, 3, 5]);
+    expect(parsed.rows.find((r) => r.sourceRow === 5)?.errors).toContain('no mineral name');
+  });
+
   it('uses Mineral Type and Product Form columns when they exist and does not shorten names', () => {
     const csv = `Category,Subcategory,Mineral Type,Product Form,Mineral Name,Image,ID
 Precious Metal,Gold,Gold,Bullion Bars,Gold Bullion Bars,https://cdn.example/MIN0120-Gold+Bullion+Bars.png,MIN0120

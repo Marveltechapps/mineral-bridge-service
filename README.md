@@ -30,20 +30,14 @@ docker compose up -d --wait mongo
 # 2. Environment
 Copy-Item .env.example .env       # then edit secrets; keep MONGODB_URI as in the example
 
-# 3. Dependencies, seed data, dev server
+# 3. Dependencies and dev server
 npm install
-npm run seed
 npm run dev                        # http://127.0.0.1:5001  (health: /health, ready: /ready, docs: /docs)
 ```
 
-`PORT` defaults to **5001** (see `.env.example`). The admin dashboard proxies to `API_BASE_URL`, which defaults to `http://127.0.0.1:5001`. Redis is optional: leave `REDIS_URL` unset for one API process. The process does not listen until MongoDB connects, so `/health` stays down until `docker compose up -d --wait mongo` has succeeded.
+`PORT` defaults to **5001** (see `.env.example`). The admin dashboard proxies to `API_BASE_URL`, which defaults to `http://127.0.0.1:5001`. Redis is optional: leave `REDIS_URL` unset for one API process. The process does not listen until MongoDB connects and initialization finishes, so `/health` stays down until `docker compose up -d --wait mongo` has succeeded.
 
-Seed with a custom admin password (applies for this PowerShell session only):
-
-```powershell
-$env:SEED_ADMIN_PASSWORD = "A-Long-Unique-Passphrase-1!"
-npm run seed
-```
+Startup inserts missing reference data, roles, permissions, and platform settings. On a **local** development database it also creates the CEO in `.env` when that email is absent, plus sample rates and catalogue lots when those collections are empty. Existing rows and passwords are left as they are. A remote database and `NODE_ENV=production` do not receive the development password, sample lots, or a seeded customer. Set `AUTO_SEED=false` to skip startup initialization. `npm run seed` runs the same initializer once and is not required for a normal start.
 
 ## Setup – Windows CMD
 
@@ -56,15 +50,9 @@ docker compose up -d --wait mongo
 rem 2. Environment
 copy .env.example .env
 
-rem 3. Dependencies, seed data, dev server
+rem 3. Dependencies and dev server
 npm install
-npm run seed
 npm run dev
-```
-
-```bat
-set SEED_ADMIN_PASSWORD=A-Long-Unique-Passphrase-1!
-npm run seed
 ```
 
 > **Variable name:** the app reads `MONGODB_URI` (not `MONGO_URI`). If your `.env` predates this repo, rename it.
@@ -74,13 +62,23 @@ npm run seed
 > process can connect without editing the Windows hosts file. Do not switch back to container host names
 > (`mongo1:27017`) for host connections – the driver would fail to resolve them.
 
-## Seeded data (`npm run seed`, idempotent)
+## Initialization (automatic, idempotent)
 
-* Reference data: categories, minerals, units, countries.
-* Roles with permission matrices, platform settings, sample reference rates.
-* One CEO admin: `SEED_ADMIN_EMAIL` (default `ceo@mineralbridge.co.ke`), password `SEED_ADMIN_PASSWORD`
-  (default `ChangeMe!Admin1` – change it on first sign-in). Re-running the seed sets that password
-  when the stored hash does not already match, and leaves every other staff row unchanged.
+The API runs this before it listens. `npm run seed` calls the same function and is optional.
+
+Every environment, but only when the row is missing:
+
+* Reference data: categories, minerals, units, countries, banks.
+* Roles and permission matrices, platform settings, and the non-secret auth policy record.
+* A CEO only when `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, and `SEED_ADMIN_PHONE` are set to a password that passes the staff policy and is not the local development password. The email must be on `STAFF_EMAIL_DOMAINS`.
+
+Local development database only (`localhost` or `127.0.0.1`, and `NODE_ENV=development`):
+
+* The CEO defaults to `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`ceo@mineralbridge.co.ke` / `ChangeMe!Admin1` when those are unset). Change it on first sign-in.
+* Sample rates, the academy tour, and sample catalogue lots, and only while the live catalogue has no other active lots.
+* An optional customer when both `SEED_USER_EMAIL` and `SEED_USER_PASSWORD` are set.
+
+Re-running does not add a second row, does not reset a password, and does not rewrite an existing category, role, staff, customer, or lot. `NODE_ENV=production` and any `mongodb+srv` (or non-loopback) database never receive sample lots, sample rates, the development password, or a seeded customer.
 
 `POST /admin/v1/auth/sign-in` checks the email and password and returns the staff session cookie plus
 `X-CSRF-Token`. Send that token on every mutation. `POST /admin/v1/auth/otp/verify` remains for a
@@ -96,7 +94,7 @@ challenge that was already issued.
 | `npm test` | Vitest (in-memory MongoDB replica set, `NODE_ENV=test`) |
 | `npm run coverage:endpoints` | compare `docs/endpoint-inventory.json` with the registered routes (`-- --strict`, `-- --write`) |
 | `npm run openapi` | regenerate `openapi/openapi.yaml` |
-| `npm run seed` | idempotent seed (see above) |
+| `npm run seed` | optional one-shot run of the same initializer the server runs on startup |
 
 Run one test file: `npx vitest run tests/admin/admin-api.test.ts`.
 
@@ -110,7 +108,7 @@ Everything is in `.env.example`, with comments. Highlights:
 | `JWT_*`, `ADMIN_SESSION_SECRET`, `WS_TOKEN_SECRET` | secrets – use long random values outside dev |
 | `CORS_WEB_ORIGINS`, `CORS_ADMIN_ORIGINS`, `CORS_MOBILE_ORIGINS` | allow-lists (comma-separated) |
 | `STAFF_EMAIL_DOMAINS` | domains allowed to sign in to the admin console |
-| `SEED_ADMIN_*` | seeded CEO account |
+| `SEED_ADMIN_*` | first CEO, created only when that email is missing |
 
 ### External providers (all optional)
 

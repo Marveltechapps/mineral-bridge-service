@@ -129,8 +129,14 @@ Foreign keys are stored as **human ids** (strings), not `ObjectId`s, so records 
 | One pending tier request per user | partial unique index on `adm_tier_requests` |
 | Audit | `AuditLog` rejects `update*`, `delete*` and re-`save` (append-only); retention 7 years |
 
-## 6. Seeding
+## 6. Initialization
 
-`npm run seed` is idempotent: reference data (categories, minerals, units, countries with BTC
-regulation, banks), the role matrix, platform/BTC/roles settings, sample rates with 30 days of history,
-academy categories and one CEO account (`SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`).
+The API process inserts missing defaults before it listens (`src/bootstrap/initialize-database.ts`).
+`npm run seed` calls that same function and is not part of a normal start.
+
+Reference data (categories, minerals, units, countries with BTC regulation, banks), the role matrix,
+and platform/auth settings are created when their keys are absent. Existing documents are not
+updated and passwords are not reset. Sample rates, the academy tour, and sample catalogue lots are
+inserted only for an empty local development database. Production and remote databases do not
+receive those rows or the development admin password. A customer row is created only when
+`SEED_USER_EMAIL` and `SEED_USER_PASSWORD` are both set and the database is local development.

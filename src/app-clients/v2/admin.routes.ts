@@ -49,6 +49,7 @@ import { getKycView } from '../../modules/kyc/kyc.service.js';
 import { decideSubmission } from '../../modules/kyc/kyc.review.js';
 import { requireAction, effectiveActions, staffHasAction, STAFF_ACTIONS } from '../../modules/staff/actions.js';
 import { unprocessable } from '../../common/errors/app-error.js';
+import { syncCatalogFromCsv } from '../../modules/catalog/sheet-sync.js';
 import {
   catalogueTree,
   createCategory,
@@ -1160,6 +1161,20 @@ export function createV2AdminRouter(): Router {
   // ---- Catalogue hierarchy writes ----
   r.get('/catalogue/tree', requireAction('catalogue'), asyncHandler(async (_req, res) => {
     res.json({ items: await catalogueTree() });
+  }));
+  r.post('/catalogue/master-sheet', requireCsrf, requireAction('catalogue'), validate({
+    body: z.object({ csv: z.string().trim().min(1).max(2_000_000) }),
+  }), asyncHandler(async (req, res) => {
+    const report = await syncCatalogFromCsv(req.body.csv, 'dashboard master sheet', fetch, { checkImages: false });
+    if (report.accessError) throw unprocessable(report.accessError);
+    res.json({
+      imported: report.imported,
+      created: report.created,
+      updated: report.updated,
+      unchanged: report.unchanged,
+      skipped: report.skipped,
+      invalid: report.invalid,
+    });
   }));
   r.post('/catalogue/categories', requireCsrf, requireAction('catalogue'), validate({
     body: z.object({
