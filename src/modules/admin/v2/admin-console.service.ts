@@ -213,6 +213,22 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
 
   const productById = new Map(products.map((p) => [String(p._id), p]));
   const productByRef = new Map(products.map((p) => [p.reference, p]));
+  // Auctions and orders are paged separately from products. A live auction on this page can
+  // point at a lot that is not in this page's product slice; resolve those lots before mapping.
+  const wantedProductIds = new Set<string>();
+  const noteProduct = (id?: string) => { if (id) wantedProductIds.add(String(id)); };
+  for (const auction of auctions) noteProduct(auction.productId);
+  for (const order of orders) for (const line of order.lines ?? []) noteProduct(line.productId);
+  const missingProductIds = [...wantedProductIds].filter((id) => !productById.has(id) && !productByRef.has(id));
+  if (missingProductIds.length) {
+    const extraProducts = await ProductModel.find({
+      $or: [{ _id: { $in: missingProductIds } }, { reference: { $in: missingProductIds } }],
+    }).lean();
+    for (const product of extraProducts) {
+      productById.set(String(product._id), product);
+      if (product.reference) productByRef.set(product.reference, product);
+    }
+  }
   const orderById = new Map(orders.map((o) => [String(o._id), o]));
   const payByOrder = new Map<string, (typeof payments)[number]>();
   for (const p of payments) if (!payByOrder.has(String(p.orderId))) payByOrder.set(String(p.orderId), p);
@@ -299,10 +315,10 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
     const insp = inspByOrder.get(String(o._id));
     const total = moneyMajor(o.pricing?.lockedTotal ?? o.pricing?.quotedTotal ?? o.total);
     const items = (o.lines ?? []).map((line) => {
-      const product = line.productId ? productById.get(line.productId) : undefined;
+      const product = line.productId ? productById.get(String(line.productId)) || productByRef.get(line.productId) : undefined;
       const unit = line.qty?.unit || (line.grams >= 1000 ? 'kg' : 'g');
       const qty = gramsToQty(line.grams, unit);
-      return { lot: product?.reference || line.name, qty, entered: line.enteredAs || '', unit };
+      return { lot: product?.reference || (line.productId ? String(line.productId) : (line.name || '')), qty, entered: line.enteredAs || '', unit };
     });
     const hist = (o.timeline ?? []).map((h) => ({
       at: ms(h.at),
@@ -441,13 +457,14 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
   }
 
   const auctionsOut = auctions.map((a) => {
-    const product = a.productId ? productById.get(a.productId) || productByRef.get(a.productId) : undefined;
+    const product = a.productId ? productById.get(String(a.productId)) || productByRef.get(a.productId) : undefined;
     const winner = a.outcome?.winnerId ? custByUser.get(a.outcome.winnerId) : undefined;
     const order = a.outcome?.settlementOrderId ? orderById.get(String(a.outcome.settlementOrderId)) : undefined;
     return {
       id: a.reference,
       auctionId: String(a._id),
-      lot: product?.reference || a.productId || a.name,
+      lot: product?.reference || (a.productId ? String(a.productId) : ''),
+      name: product?.name || a.name || '',
       qty: gramsToQty(a.quantityGrams, a.qty?.unit || (a.quantityGrams >= 1000 ? 'kg' : 'g')),
       start: moneyMajor(a.startingBid),
       reserve: a.reserve ? moneyMajor(a.reserve) : 0,
