@@ -1,5 +1,5 @@
 import { conflict, forbidden, notFound, unprocessable } from '../../common/errors/app-error.js';
-import { toGrams } from '../../common/utils/quantity.js';
+import { resolveEnteredQuantity, toGrams } from '../../common/utils/quantity.js';
 import { references } from '../../common/utils/references.js';
 import { CartModel } from '../../models/cart.model.js';
 import { ProductModel } from '../../models/catalog.model.js';
@@ -38,6 +38,18 @@ function toPersistedWorkflow(definition: WorkflowDefinitionId, initialKey: strin
   };
 }
 
+/** BUG-012: expose sell qty as { value, unit, grams } — never raw grams under the entered unit. */
+function normalizeSellForApi(sell: Record<string, unknown> | null | undefined) {
+  if (!sell || typeof sell !== 'object') return sell ?? null;
+  const q = sell.qty as { value?: unknown; unit?: string; base?: number; grams?: number; measure?: string } | undefined;
+  if (!q) return sell;
+  const resolved = resolveEnteredQuantity(q);
+  return {
+    ...sell,
+    qty: { value: resolved.value, unit: resolved.unit, grams: resolved.grams },
+  };
+}
+
 function toOrderDetail(order: IOrder) {
   return {
     id: order._id,
@@ -57,7 +69,7 @@ function toOrderDetail(order: IOrder) {
       : null,
     hold: order.hold ?? null,
     lines: order.lines,
-    sell: order.sell ?? null,
+    sell: normalizeSellForApi(order.sell as Record<string, unknown> | null | undefined),
     delivery: order.delivery ?? null,
     totals: {
       subtotal: order.subtotal,
@@ -93,6 +105,9 @@ function toPriceVariation(v: NonNullable<IOrder['priceVariations']>[number]) {
 }
 
 function toOrderCard(order: IOrder) {
+  const sellQty = order.side === 'sell' && order.sell?.qty
+    ? resolveEnteredQuantity(order.sell.qty as { value?: unknown; unit?: string; grams?: number; base?: number })
+    : null;
   return {
     reference: order.reference,
     kind: order.side === 'sell' ? 'sell' : 'buy',
@@ -101,6 +116,10 @@ function toOrderCard(order: IOrder) {
     step: order.workflow?.stepKey ?? null,
     actionNeeded: order.workflow?.owner === 'customer',
     updatedAt: order.updatedAt.toISOString(),
+    // Dashboard list must not wait for the detail fetch to learn the quantity (BUG-013).
+    ...(sellQty
+      ? { sell: { qty: sellQty.value, unit: sellQty.unit, grade: order.sell?.grade ?? '' } }
+      : {}),
   };
 }
 
@@ -328,7 +347,14 @@ export const v2OrdersService = {
       sell: {
         mineralSlug: sell.mineral,
         name: sell.name ?? sell.mineral,
-        qty: { measure: 'mass', unit: unit === 't' ? 't' : unit, base: grams },
+        // Persist entered value + canonical grams so read-back never re-converts (BUG-012).
+        qty: {
+          measure: 'mass',
+          unit: unit === 't' ? 't' : unit,
+          value: Number(sell.qty.value),
+          base: grams,
+          grams,
+        },
         grade: sell.grade,
         form: sell.form,
         details: sell.details,
@@ -403,7 +429,7 @@ export const v2OrdersService = {
       priceVariations: (order.priceVariations ?? []).map(toPriceVariation),
     };
     const quotation =
-      (await QuotationModel.findOne({ orderId: order._id, status: 'issued' }).lean()) ??
+      (await QuotationModel.findOne({ orderId: order._id, status: 'issued' }).sort({ rev: -1 }).lean()) ??
       (await QuotationModel.findOne({ orderId: order._id }).sort({ rev: -1 }).lean());
     if (!quotation) return detail;
     return {

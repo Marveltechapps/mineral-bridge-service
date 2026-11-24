@@ -74,9 +74,42 @@ export function missingCaptureKinds(
   idType: KycIdType | undefined,
   docs: readonly DocView[],
 ): Array<Exclude<KycDocKind, 'selfie'>> {
-  if (!idType) return ['id_front'];
-  const need: Array<Exclude<KycDocKind, 'selfie'>> = idType.requiresBack ? ['id_front', 'id_back'] : ['id_front'];
+  // BUG-001: UI defaults to National ID (nin). Treat unset id type the same so id_back is required.
+  const effective = idType ?? getIdType('nin');
+  if (!effective) return ['id_front'];
+  const need: Array<Exclude<KycDocKind, 'selfie'>> = effective.requiresBack ? ['id_front', 'id_back'] : ['id_front'];
   return need.filter((k) => !activePassed(docs, k));
+}
+
+/**
+ * Document kinds required for a KYC draft/submission.
+ * BUG-001: when the draft has no idTypeId yet, default to National ID (nin) — matching the
+ * web/mobile UI default — so `id_back` is required and uploadable.
+ */
+const NON_BUSINESS_CUSTOMER_TYPES = new Set(['investor', 'asm', 'scrap']);
+
+/** Same rule as web/mobile `isBusiness`: exempt types never need a business registration doc. */
+export function customerNeedsBusinessKycDoc(user: Pick<UserRecord, 'roles' | 'business'>): boolean {
+  const roles = user.roles ?? [];
+  const types: string[] = [];
+  if (roles.includes('buyer') || roles.includes('both')) {
+    if (user.business?.buyerType) types.push(user.business.buyerType);
+  }
+  if (roles.includes('seller') || roles.includes('both')) {
+    if (user.business?.sellerType) types.push(user.business.sellerType);
+  }
+  return types.some((t) => !NON_BUSINESS_CUSTOMER_TYPES.has(t));
+}
+
+export function requiredKycDocKinds(input: {
+  idTypeId?: string | null;
+  isBusiness?: boolean;
+}): KycDocKind[] {
+  const idType = getIdType(input.idTypeId) ?? getIdType('nin');
+  const kinds: KycDocKind[] = ['id_front', 'selfie', 'proof_of_address'];
+  if (idType?.requiresBack) kinds.splice(1, 0, 'id_back');
+  if (input.isBusiness) kinds.push('business_registration');
+  return kinds;
 }
 
 export function hasPassedSelfie(docs: readonly DocView[]): boolean {
@@ -130,6 +163,8 @@ export async function ensureDraft(userId: string, source: KycSource): Promise<Ky
   const insert = {
     publicId: opaqueId(IdPrefixes.kyc),
     source,
+    // BUG-001: match client default ("National ID") so id_back is required from the first GET.
+    idTypeId: 'nin',
     documentIds: [],
     declaredDetails: {},
     consent: { given: false },

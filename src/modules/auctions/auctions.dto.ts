@@ -4,6 +4,7 @@ import { mobileQuantity, webQuantity } from '../../common/utils/quantity.js';
 import { agoDisplay, countdownDisplay, iso } from '../../common/utils/time-display.js';
 import { now } from '../../common/utils/clock.js';
 import type { IAuction, IBid } from '../../models/auction.model.js';
+import { sameActorId } from './auction-ids.js';
 import { ANTI_SNIPE, bidderInitials, bidderLabel, effectiveState, nextValidBidMinor, reserveMet } from './auction.rules.js';
 import type { PlaceBidResult } from './auctions.service.js';
 
@@ -49,11 +50,22 @@ export function toMobileAuctionSummary(a: IAuction) {
 
 export function toMobileAuctionDetail(a: IAuction, viewer: Viewer) {
   const yourBid = viewer?.best.get(a._id);
+  const status = mobileStatus(a);
+  const youAreHighest = Boolean(viewer && sameActorId(a.highest?.bidderId, viewer.userId));
+  // BUG-018: expose outcome so clients do not infer "won" from youAreHighest alone.
+  const outcome =
+    status === 'ended' && a.outcome
+      ? {
+          result: a.outcome.result,
+          winnerId: a.outcome.winnerId ?? null,
+          youWon: Boolean(viewer && a.outcome.result === 'sold' && sameActorId(a.outcome.winnerId, viewer.userId)),
+        }
+      : null;
   return {
     id: a._id,
     reference: a.reference,
     name: a.name,
-    status: mobileStatus(a),
+    status,
     lot: {
       quantity: mobileQuantity(a.quantityGrams),
       grade: a.grade ?? null,
@@ -71,8 +83,9 @@ export function toMobileAuctionDetail(a: IAuction, viewer: Viewer) {
       bidCount: a.bidCount,
       reserveMet: reserveMet(a),
       yourBid: yourBid !== undefined ? mobileMoney(m(a, yourBid)) : null,
-      youAreHighest: Boolean(viewer && a.highest?.bidderId === viewer.userId),
+      youAreHighest,
     },
+    outcome,
     closesAt: a.closesAt.toISOString(),
     antiSniping: { enabled: ANTI_SNIPE.enabled, extendByMinutes: ANTI_SNIPE.extendByMs / 60_000, withinMinutes: ANTI_SNIPE.withinMs / 60_000 },
     bindingNote: 'Bids are binding. Winning bids move straight to delivery details.',

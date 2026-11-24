@@ -7,6 +7,7 @@ import { ProductModel } from '../../models/catalog.model.js';
 import { optionalUser } from '../auth/auth.middleware.js';
 import { catalogService as svc } from './catalog.service.js';
 import { documentTypeParam, resolveProductDocument, type ProductDocumentType } from './product-documents.js';
+import { catalogueAvailabilityFlags } from './product-availability.js';
 import { toMobileProduct, toMobileProductDetail } from './product.mapper.js';
 
 const listQuery = z.object({
@@ -90,7 +91,7 @@ export function createV2CatalogueRouter(): Router {
         return {
           ...card,
           productRef: p.reference,
-          soldOut: (p.availableGrams ?? 0) <= 0,
+          ...catalogueAvailabilityFlags(p),
         };
       });
       const next = skip + items.length < total ? String(skip + items.length) : null;
@@ -111,7 +112,7 @@ export function createV2CatalogueRouter(): Router {
       }
       const names = await svc.typeNames();
       const detail = toMobileProductDetail(p, names.get(p.typeSlug));
-      res.status(200).json({ ...detail, productRef: p.reference });
+      res.status(200).json({ ...detail, productRef: p.reference, ...catalogueAvailabilityFlags(p) });
     }),
   );
 

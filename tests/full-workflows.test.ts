@@ -188,9 +188,9 @@ describe('full buy and sell workflows on an isolated database', () => {
       confirmed: true,
       version: (await at(sellRef)).version,
     });
-    expect((await at(sellRef)).key).toBe('formOk');
-    expect((await advance(sellRef)).key).toBe('schedule');
-    expect((await advance(sellRef, { date: '2026-12-02', time: '10:00', location: 'Nairobi yard', type: 'platform_onsite' })).key).toBe('inspect');
+    // BUG-014: seller confirmation auto-schedules inspection and lands on `inspect`
+    // (previously stopped at formOk and required manual schedule + inspect advances).
+    expect((await at(sellRef)).key).toBe('inspect');
     expect((await advance(sellRef, { weight: { value: 1, unit: 'kg' }, result: 'matches', notes: 'Seals intact' })).key).toBe('sgs');
     expect((await advance(sellRef, { certificateNo: 'SGS-FLOW-1', grade: 'Au 90%', net: { value: 1, unit: 'kg' }, result: 'compliant' })).key).toBe('reportOk');
     await v2LifecycleService.acceptInspection(userId, sellRef, (await at(sellRef)).version);

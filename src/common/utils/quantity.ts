@@ -50,6 +50,31 @@ export function toGrams(value: number, unit: QuantityUnit): number {
   return grams;
 }
 
+/**
+ * Read a persisted sell quantity back as the number the seller typed.
+ * `{ value: 1000, unit: 'kg', grams: 1000 }` is 1 kg (grams were stored in `value`).
+ * `{ value: 0, unit: 'kg', grams: 1000 }` is 1 kg (missing entered value, not a real zero).
+ */
+export function resolveEnteredQuantity(q?: {
+  value?: unknown;
+  unit?: string;
+  grams?: number;
+  base?: number;
+} | null): { value: number; unit: string; grams?: number } {
+  const rawUnit = String(q?.unit || 'kg');
+  const unit = rawUnit === 'MT' ? 't' : rawUnit;
+  const parsed = commercialUnit(unit);
+  const per = parsed ? GRAMS_PER_UNIT[parsed] : 0;
+  const grams = Number(q?.grams ?? q?.base ?? 0);
+  let value = q?.value != null && q.value !== '' ? Number(q.value) : NaN;
+  const storedAsGrams = Number.isFinite(value) && grams > 0 && per > 1 && Math.abs(value - grams) < 1e-6;
+  if ((!Number.isFinite(value) || value === 0 || storedAsGrams) && grams > 0 && parsed && per > 0) {
+    value = fromGrams(grams, parsed);
+  }
+  if (!Number.isFinite(value)) value = 0;
+  return { value, unit, grams: grams || undefined };
+}
+
 export function fromGrams(grams: number, unit: QuantityUnit): number {
   const raw = grams / GRAMS_PER_UNIT[unit];
   return Number(raw.toFixed(unit === 'oz' || unit === 'ct' ? 4 : 6));

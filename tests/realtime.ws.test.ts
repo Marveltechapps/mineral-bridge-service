@@ -6,6 +6,7 @@ import { clearDb, createUser, seedProduct, startDb, stopDb } from './helpers/har
 import { auctionsService } from '../src/modules/auctions/auctions.service.js';
 import { negotiationsService } from '../src/modules/negotiations/negotiations.service.js';
 import { auctionHub } from '../src/realtime/auction-hub.js';
+import { loadEnv } from '../src/config/env.js';
 import { signWsTicket } from '../src/realtime/ws-auth.js';
 import { attachWebSocketServer } from '../src/realtime/ws-server.js';
 
@@ -13,7 +14,16 @@ vi.mock('../src/modules/auth/auth.middleware.js', async () => await import('./he
 
 let server: http.Server;
 let port: number;
-const ORIGIN = 'http://localhost:5173';
+/**
+ * Use an origin the API actually allows. A developer `.env` lists the Next.js
+ * customer app (`http://localhost:3000`). The schema default (`:5173`) is only
+ * used when that list is empty. Hardcoding `:5173` made every allowed browser
+ * look foreign and the upgrade returned 403 before channel checks.
+ */
+const ORIGIN = (() => {
+  const origins = loadEnv().corsWebOrigins;
+  return origins.find((origin) => origin === 'http://localhost:3000' || origin === 'http://127.0.0.1:3000') ?? origins[0] ?? 'http://localhost:5173';
+})();
 
 beforeAll(async () => {
   await startDb();

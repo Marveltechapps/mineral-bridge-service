@@ -6,6 +6,8 @@ import {
   hasPassedSelfie,
   kindForWebSide,
   missingCaptureKinds,
+  requiredKycDocKinds,
+  customerNeedsBusinessKycDoc,
   requiresManualReview,
   submissionBlock,
   webSideForKind,
@@ -38,8 +40,9 @@ describe('requiresManualReview (M-18)', () => {
 });
 
 describe('missingCaptureKinds', () => {
-  it('needs front only when no ID type is chosen', () => {
-    expect(missingCaptureKinds(undefined, [])).toEqual(['id_front']);
+  it('bugfix: defaults unset ID type to National ID (needs front and back)', () => {
+    // BUG-001 — UI defaults to National ID; unset draft must still require id_back.
+    expect(missingCaptureKinds(undefined, [])).toEqual(['id_front', 'id_back']);
   });
   it('needs front and back for NIN, front only for a passport', () => {
     expect(missingCaptureKinds(nin, [])).toEqual(['id_front', 'id_back']);
@@ -139,3 +142,68 @@ describe('upload validation', () => {
     expect(validateKycUpload('id_front', jpeg)).toBe('image/jpeg');
   });
 });
+
+describe('bugfix requiredKycDocKinds (BUG-001)', () => {
+  it('bug_001_front_then_back_both_stored: unset id type still requires id_back', () => {
+    expect(requiredKycDocKinds({ idTypeId: undefined })).toEqual([
+      'id_front',
+      'id_back',
+      'selfie',
+      'proof_of_address',
+    ]);
+    expect(requiredKycDocKinds({ idTypeId: null })).toContain('id_back');
+    expect(requiredKycDocKinds({ idTypeId: 'nin' })).toContain('id_back');
+  });
+
+  it('bug_001_back_then_front_order_independent: both sides required regardless of order', () => {
+    const kinds = requiredKycDocKinds({ idTypeId: 'nin' });
+    expect(kinds.indexOf('id_front')).toBeLessThan(kinds.indexOf('id_back'));
+    expect(kinds).toEqual(expect.arrayContaining(['id_front', 'id_back']));
+  });
+
+  it('bug_001 neighbouring: passport does not require id_back', () => {
+    expect(requiredKycDocKinds({ idTypeId: 'passport' })).not.toContain('id_back');
+    expect(requiredKycDocKinds({ idTypeId: 'passport' })).toEqual([
+      'id_front',
+      'selfie',
+      'proof_of_address',
+    ]);
+  });
+
+  it('bug_001_invalid_type_or_oversize_rejected: 4xx with a field error, and no partial record', () => {
+    const huge = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      Buffer.alloc(12 * 1024 * 1024),
+    ]);
+    expect(() => validateKycUpload('id_back', huge)).toThrowError(
+      expect.objectContaining({ status: 422, code: 'document/too-large' }) as unknown as Error,
+    );
+  });
+});
+
+describe('bugfix customerNeedsBusinessKycDoc (BUG-002)', () => {
+  it('bug_002_investor_with_company_name: exempt buyer type never needs business doc', () => {
+    expect(
+      customerNeedsBusinessKycDoc({
+        roles: ['buyer'],
+        business: { buyerType: 'investor', name: 'Okafor Holdings' },
+      }),
+    ).toBe(false);
+    expect(
+      requiredKycDocKinds({
+        idTypeId: 'nin',
+        isBusiness: customerNeedsBusinessKycDoc({
+          roles: ['buyer'],
+          business: { buyerType: 'investor', name: 'Okafor Holdings' },
+        }),
+      }),
+    ).not.toContain('business_registration');
+  });
+
+  it('bug_002_refinery_requires_business_registration', () => {
+    expect(
+      customerNeedsBusinessKycDoc({ roles: ['buyer'], business: { buyerType: 'refinery', name: 'Kestrel Metals' } }),
+    ).toBe(true);
+  });
+});
+

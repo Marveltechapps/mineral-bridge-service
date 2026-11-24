@@ -175,8 +175,13 @@ export const v2PaymentsService = {
         throw unprocessable('Enter a valid BTC transaction id.', { btcTxid: 'Invalid' });
       }
     }
-    if ((method === 'upi' || method === 'net_banking') && !body.reference) {
+    const reference = (body.reference || '').trim();
+    const referenceRequired = method === 'upi' || method === 'net_banking';
+    if (referenceRequired && !reference) {
       throw unprocessable('Payment reference is required.', { reference: 'Required' });
+    }
+    if (reference && reference.length < 6) {
+      throw unprocessable('Enter the payment reference (at least 6 characters).', { reference: 'Too short' });
     }
 
     if (body.terms || body.billing) {
@@ -209,7 +214,7 @@ export const v2PaymentsService = {
     });
     payment.status = 'submitted';
     payment.proofFileIds = body.proofFileIds ?? payment.proofFileIds ?? [];
-    if (body.reference) payment.gateway = { provider: method, reference: body.reference };
+    if (reference) payment.gateway = { provider: method, reference };
     if (method === 'btc' && payment.btc) {
       payment.btc = { ...payment.btc, txid: body.btcTxid, confirmations: 0 };
       payment.markModified('btc');
@@ -373,6 +378,8 @@ export const v2PaymentsService = {
       actor: { kind: 'staff', id: staff.id, name: staff.name },
       note: `Payment rejected: ${reason}`,
       version,
+      // A leftover quotation hold must not block the retry (BUG-010).
+      clearHold: true,
     });
   },
 };

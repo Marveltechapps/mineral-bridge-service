@@ -276,14 +276,40 @@ export const v2LifecycleService = {
     const order = await loadOwnedOrder(userId, ref);
     assertOrderVersion(order, body.version);
     assertCurrent(workflowStateFromOrder(order), 'form');
-    await casAdvanceOrder({
+    const actor = { kind: 'customer' as const, id: userId };
+    // Advance to formOk, then auto-schedule inspection from the seller's preferred slot (BUG-014).
+    const afterForm = await casAdvanceOrder({
       order,
       toKey: 'formOk',
-      actor: { kind: 'customer', id: userId },
+      actor,
       note: 'Seller confirmation form submitted',
       version: body.version,
       clearHold: true,
       extraSet: { sellerForm: { payout: body.payout, inspectionSlot: body.inspectionSlot, confirmedAt: new Date() } },
+    });
+    await InspectionModel.create({
+      orderId: order._id,
+      type: 'third_party',
+      schedule: {
+        date: String(body.inspectionSlot.date),
+        time: String(body.inspectionSlot.time),
+        location: String(body.inspectionSlot.address || 'TBD'),
+        scheduledBy: actor,
+        at: new Date(),
+      },
+      status: 'scheduled',
+    });
+    await casAdvanceOrder({
+      order: afterForm,
+      toKey: 'inspect',
+      actor: { kind: 'system', id: 'system' },
+      note: 'Inspection scheduled from seller confirmation',
+      version: afterForm.version,
+    });
+    void enqueueOutbox('notify.staff', {
+      action: 'inspection',
+      event: 'inspection.scheduled',
+      orderRef: order.reference,
     });
     return v2OrdersService.get(userId, order.reference);
   },

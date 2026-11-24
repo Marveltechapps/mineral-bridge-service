@@ -27,11 +27,16 @@ export function maskPhone(e164: string): string {
   return `${e164.slice(0, 3)} ${e164.slice(3, 5)} ••• ${e164.slice(-4)}`;
 }
 
-/** `adaeze@example.com` → `a•••@example.com` */
+/** `adaeze@example.com` → `ad•••e@example.com`; short locals → `a•••@domain`. */
 export function maskEmail(email: string): string {
   const at = email.indexOf('@');
   if (at < 1) return '•••';
-  return `${email[0]}•••${email.slice(at)}`;
+  const local = email.slice(0, at);
+  const domain = email.slice(at);
+  if (local.length >= 3) {
+    return `${local.slice(0, 2)}•••${local.slice(-1)}${domain}`;
+  }
+  return `${local[0] ?? ''}•••${domain}`;
 }
 
 /** Masks the last IPv4 octet / trailing IPv6 groups for session lists. */

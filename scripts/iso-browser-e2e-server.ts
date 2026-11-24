@@ -20,6 +20,8 @@ process.env.DEV_OTP_ENABLED = 'true';
 process.env.PORT = String(PORT);
 process.env.HOST = '127.0.0.1';
 process.env.OTP_PROVIDER = 'fake';
+process.env.OTP_MAX_PER_PHONE_15MIN = '50';
+process.env.OTP_MAX_PER_IP_15MIN = '200';
 process.env.EMAIL_PROVIDER = 'fake';
 process.env.COOKIE_SECURE = 'false';
 process.env.CORS_WEB_ORIGINS = expandOrigins(WEB_ORIGIN).join(',');
@@ -105,8 +107,133 @@ for (const [i, name] of ['Iso Gold Dore', 'Iso Copper Cathode', 'Iso Lithium Spo
     unitPriceMinorE4PerGram: 10_000,
     seller: { name: 'Mineral Bridge', tier: 'mineral_bridge', verified: true },
     attributes: {},
+    ...(i === 0
+      ? {
+          grade: '99.5%',
+          lab: { name: 'SGS', certificateNo: 'ISO-COA-1' },
+          documents: [{
+            _id: 'doc_iso_coa',
+            name: 'Iso assay certificate.pdf',
+            kind: 'certificate_of_analysis',
+            url: 'https://example.com/iso-coa.pdf',
+            contentType: 'application/pdf',
+            visible: true,
+          }],
+        }
+      : {}),
   });
 }
+
+await ProductModel.create({
+  reference: 'LOT-SOLD',
+  name: 'Iso Sold Gold',
+  typeSlug: 'gold',
+  categorySlug: 'precious',
+  mineralCode: 'AU',
+  origin: { country: 'KE' },
+  status: 'sold',
+  availableGrams: 0,
+  minOrderGrams: 100,
+  unitPriceMinorE4PerGram: 10_000,
+  seller: { name: 'Mineral Bridge', tier: 'mineral_bridge', verified: true },
+  attributes: {},
+});
+
+await ProductModel.create({
+  reference: 'LOT-REQUEST',
+  name: 'Iso Gold On Request',
+  typeSlug: 'gold',
+  categorySlug: 'precious',
+  mineralCode: 'AU',
+  origin: { country: 'KE' },
+  status: 'active',
+  availableGrams: 0,
+  minOrderGrams: 100,
+  unitPriceMinorE4PerGram: 10_000,
+  seller: { name: 'Mineral Bridge', tier: 'mineral_bridge', verified: true },
+  attributes: { sourceSheet: true },
+});
+
+const usd = (amountMinor: number) => ({ amountMinor, currency: 'USD', scale: 2 });
+const { OrderModel } = await import('../src/models/order.model.js');
+const { QuotationModel } = await import('../src/models/workflow.model.js');
+const { auctionsService } = await import('../src/modules/auctions/auctions.service.js');
+
+const revised = await OrderModel.create({
+  reference: 'MB-ISO-QUOTE',
+  userId: buyer._id,
+  customerNo: 'C-6001',
+  side: 'buy',
+  status: 'active',
+  source: { kind: 'admin' },
+  workflow: { definition: 'buy.v2', stepKey: 'quoteOk', stepIndex: 2, owner: 'customer', role: 'customer', enteredAt: new Date() },
+  lines: [{ name: 'Revised gold lot', productId: 'LOT-BR-1', grams: 1000, unitPriceMinorE4PerGram: 1, lineTotalMinor: 4500 }],
+  totalGrams: 1000,
+  subtotal: usd(4500),
+  platformFee: usd(0),
+  surcharge: usd(0),
+  total: usd(4500),
+  version: 2,
+});
+await QuotationModel.create({
+  orderId: revised._id,
+  number: 'Q-ISO-R2',
+  rev: 2,
+  lines: [],
+  product: usd(4500),
+  fee: usd(0),
+  transport: usd(0),
+  total: usd(4500),
+  validUntil: new Date(Date.now() + 86_400_000),
+  status: 'issued',
+  issuedAt: new Date(),
+  issuedBy: { kind: 'staff', id: 'staff-iso', name: 'Desk' },
+});
+
+await OrderModel.create({
+  reference: 'MB-ISO-PAY',
+  userId: buyer._id,
+  customerNo: 'C-6001',
+  side: 'buy',
+  status: 'active',
+  source: { kind: 'admin' },
+  workflow: { definition: 'buy.v2', stepKey: 'paid', stepIndex: 5, owner: 'customer', role: 'customer', enteredAt: new Date() },
+  lines: [{ name: 'Payment retry lot', productId: 'LOT-BR-1', grams: 1000, unitPriceMinorE4PerGram: 1, lineTotalMinor: 4500 }],
+  totalGrams: 1000,
+  subtotal: usd(4500),
+  platformFee: usd(0),
+  surcharge: usd(0),
+  total: usd(4500),
+  version: 4,
+});
+
+await OrderModel.create({
+  reference: 'MB-ISO-SELL',
+  userId: buyer._id,
+  customerNo: 'C-6001',
+  side: 'sell',
+  status: 'active',
+  source: { kind: 'app_sell_form' },
+  workflow: { definition: 'sell.v2', stepKey: 'inspect', stepIndex: 2, owner: 'platform', role: 'inspection', enteredAt: new Date() },
+  lines: [],
+  totalGrams: 1000,
+  subtotal: usd(0),
+  platformFee: usd(0),
+  surcharge: usd(0),
+  total: usd(0),
+  sell: { name: 'Iso gold dust', qty: { value: 1000, unit: 'kg', grams: 1000 }, grade: '80%' },
+  version: 1,
+});
+
+await auctionsService.create({
+  name: 'Iso Gold Auction',
+  quantityGrams: 1000,
+  startingBidMinor: 100_000,
+  minimumIncrementMinor: 1_000,
+  opensAt: new Date(Date.now() - 3_600_000),
+  closesAt: new Date(Date.now() + 3_600_000),
+  status: 'live',
+});
 
 await SupportTicketModel.create({
   reference: 'TCK-BR-1',

@@ -11,10 +11,29 @@ import { loadOwnedOrder, loadOrderByRef } from './v2.order-helpers.js';
 
 function msgDto(m: ISupportTicket['messages'][number]) {
   const readAt = (m as { readAt?: Date }).readAt;
+  const authorRaw = m.author as unknown;
+  // BUG-016: always expose structured sender fields for clients.
+  const authorObj =
+    typeof authorRaw === 'string'
+      ? {
+          kind: authorRaw === 'agent' ? 'agent' : 'user',
+          sender_role: authorRaw === 'agent' ? 'agent' : 'customer',
+          sender_name: (m as { agentName?: string }).agentName ?? (authorRaw === 'agent' ? 'Support' : 'You'),
+        }
+      : authorRaw && typeof authorRaw === 'object'
+        ? authorRaw
+        : { kind: 'user', sender_role: 'customer' };
   return {
     id: m._id,
     body: m.body,
-    author: m.author,
+    author: authorObj,
+    sender_id: (authorObj as { id?: string }).id ?? null,
+    sender_name: (authorObj as { sender_name?: string; name?: string }).sender_name
+      ?? (authorObj as { name?: string }).name
+      ?? null,
+    sender_role: (authorObj as { sender_role?: string; kind?: string }).sender_role
+      ?? (authorObj as { kind?: string }).kind
+      ?? null,
     attachmentIds: m.attachmentIds ?? [],
     at: (m.at instanceof Date ? m.at : new Date(m.at)).toISOString(),
     readAt: readAt ? (readAt instanceof Date ? readAt : new Date(readAt)).toISOString() : null,

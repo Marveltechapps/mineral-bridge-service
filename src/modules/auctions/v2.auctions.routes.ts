@@ -7,7 +7,7 @@ import { asyncHandler } from '../../common/utils/async-handler.js';
 import { getUserContext, optionalUser, requireKyc, requireRole, requireUser } from '../auth/auth.middleware.js';
 import { auctionsService as svc } from './auctions.service.js';
 import type { ListState } from './auctions.service.js';
-import { toMobileAuctionDetail, toMobileAuctionSummary, toMobileBid, toMobileBidPlaced } from './auctions.dto.js';
+import { toMobileAuctionDetail, toMobileAuctionSummary, toMobileBid, toMobileBidPlaced, toMobileMyBid } from './auctions.dto.js';
 
 async function resolveAuction(ref: string) {
   try {
@@ -40,8 +40,9 @@ export function createV2AuctionsRouter(): Router {
       if (q.status === 'mine') {
         if (!req.actor || req.actor.kind !== 'user') throw forbidden('auth/token-invalid', 'Sign in required');
         const mine = await svc.myBids(req.actor.userId, undefined, skip, limit);
+        // BUG-018: clients expect MyBidRow shape (auctionId, youAreHighest, …), not raw rows.
         res.json({
-          items: mine.rows,
+          items: mine.rows.map(toMobileMyBid),
           nextCursor: skip + mine.rows.length < mine.total ? String(skip + mine.rows.length) : null,
           total: mine.total,
         });
@@ -169,13 +170,18 @@ export function createV2AuctionsRouter(): Router {
       const { user } = getUserContext(req);
       const a = await resolveAuction(String(req.params.ref));
       const finalized = await svc.ensureFinalized(a);
-      if (finalized.outcome?.result !== 'sold' || finalized.outcome.winnerId !== user.id) {
+      // BUG-018: compare normalized ids (ObjectId vs string).
+      const { sameActorId } = await import('./auction-ids.js');
+      const outcome = finalized.outcome;
+      const winnerIds = [outcome?.winnerId, finalized.highest?.bidderId];
+      const isWinner = !!outcome && outcome.result === 'sold' && winnerIds.some((id) => sameActorId(id, user.id));
+      if (!isWinner || !outcome) {
         throw conflict('auction/not-winner', 'Only the winning bidder can create the settlement order.');
       }
-      if (finalized.outcome.settlementOrderId) {
+      if (outcome.settlementOrderId) {
         const { OrderModel } = await import('../../models/order.model.js');
-        const existing = await OrderModel.findById(finalized.outcome.settlementOrderId).lean();
-        res.status(200).json({ orderRef: existing?.reference ?? finalized.outcome.settlementOrderId });
+        const existing = await OrderModel.findById(outcome.settlementOrderId).lean();
+        res.status(200).json({ orderRef: existing?.reference ?? outcome.settlementOrderId });
         return;
       }
       // finalize() already creates settlement; re-run finalize to converge

@@ -165,9 +165,12 @@ export const adminV2OrdersService = {
   }) {
     const order = await loadOrderByRef(input.ref);
     assertOrderVersion(order, input.version);
-    if (order.hold?.type) throw conflict('step/hold', 'Clear the hold before advancing.');
     const wf = workflowStateFromOrder(order);
     const reissueQuote = input.stepKey === 'quote' && wf.current.key === 'quoteOk';
+    const reissueAfterDecline = reissueQuote && order.hold?.type === 'declined';
+    if (order.hold?.type && !reissueAfterDecline) {
+      throw conflict('step/hold', 'Clear the hold before advancing.');
+    }
     if (!reissueQuote) assertCurrent(wf, input.stepKey);
 
     const actor = { kind: 'staff' as const, id: input.staff.id, name: input.staff.name, role: input.staff.role };
@@ -263,6 +266,7 @@ export const adminV2OrdersService = {
           note: input.note ?? 'Quotation issued',
           version: input.version,
           extraSet: { 'pricing.quotedTotal': money(totalMinor) },
+          clearHold: reissueAfterDecline,
         });
         void notifyUser(order.userId, {
           event: 'quotation.issued',
@@ -335,8 +339,34 @@ export const adminV2OrdersService = {
         return casAdvanceOrder({ order, toKey: order.side === 'buy' ? 'receipt' : 'done', actor, note: input.note, version: input.version, extraSet: order.side === 'sell' ? { status: 'completed' } : undefined });
       case 'reviewed':
         return casAdvanceOrder({ order, toKey: 'quote', actor, note: input.note, version: input.version });
-      case 'formOk':
+      case 'formOk': {
+        // BUG-014: if the seller already gave a preferred slot, schedule inspection immediately.
+        const slot = (order as { sellerForm?: { inspectionSlot?: { date?: string; time?: string; address?: string } } })
+          .sellerForm?.inspectionSlot;
+        if (slot?.date && slot?.time) {
+          const after = await casAdvanceOrder({ order, toKey: 'schedule', actor, note: input.note, version: input.version });
+          await InspectionModel.create({
+            orderId: order._id,
+            type: 'third_party',
+            schedule: {
+              date: String(slot.date),
+              time: String(slot.time),
+              location: String(slot.address ?? 'TBD'),
+              scheduledBy: actor,
+              at: new Date(),
+            },
+            status: 'scheduled',
+          });
+          return casAdvanceOrder({
+            order: after,
+            toKey: 'inspect',
+            actor,
+            note: input.note ?? 'Inspection scheduled from seller preference',
+            version: after.version,
+          });
+        }
         return casAdvanceOrder({ order, toKey: 'schedule', actor, note: input.note, version: input.version });
+      }
       case 'schedule': {
         await InspectionModel.create({
           orderId: order._id,

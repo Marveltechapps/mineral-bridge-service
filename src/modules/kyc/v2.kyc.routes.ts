@@ -9,8 +9,10 @@ import { enqueueOutbox } from '../outbox/outbox.service.js';
 import { getIdType } from './kyc.id-types.js';
 import {
   addDocument,
+  customerNeedsBusinessKycDoc,
   getKycView,
   removeDocumentKind,
+  requiredKycDocKinds,
   setDraftIdType,
   submitWeb,
   type KycView,
@@ -56,12 +58,10 @@ function toWireIdType(id: string | undefined): string | null {
 }
 
 function requiredKinds(view: KycView): KycDocKind[] {
-  const idType = getIdType(view.active?.idTypeId);
-  const kinds: KycDocKind[] = ['id_front', 'selfie', 'proof_of_address'];
-  if (idType?.requiresBack) kinds.splice(1, 0, 'id_back');
-  const isBusiness = Boolean(view.user.business?.name || view.user.profile.companyName);
-  if (isBusiness) kinds.push('business_registration');
-  return kinds;
+  return requiredKycDocKinds({
+    idTypeId: view.active?.idTypeId,
+    isBusiness: customerNeedsBusinessKycDoc(view.user),
+  });
 }
 
 function toV2KycBody(view: KycView) {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { notFound, unprocessable } from '../../common/errors/app-error.js';
 import { validate } from '../../common/middleware/validate.js';
 import { asyncHandler } from '../../common/utils/async-handler.js';
-import { toGrams } from '../../common/utils/quantity.js';
+import { fromGrams, mobileQuantity, toGrams } from '../../common/utils/quantity.js';
 import { ProductModel } from '../../models/catalog.model.js';
 import { getUserContext, requireUser } from '../auth/auth.middleware.js';
 import { cartService as svc, type PricedCart } from './cart.service.js';
@@ -15,22 +15,26 @@ const qtySchema = z.object({
 
 function toV2Cart(p: PricedCart) {
   return {
-    items: p.lines.map((l) => ({
-      productRef: l.product?.reference ?? l.product?._id ?? null,
-      name: l.product?.name ?? null,
-      qty: { value: String(l.grams), unit: 'g' as const },
-      entered: { value: String(l.grams), unit: 'g' as const },
-      available: l.product
-        ? { value: String(l.product.availableGrams), unit: 'g' as const }
-        : null,
-      ok: !l.issue,
-      issue:
-        l.issue === 'unavailable'
-          ? 'withdrawn'
-          : l.issue === 'insufficient-quantity'
-            ? 'insufficient'
-            : l.issue ?? null,
-    })),
+    items: p.lines.map((l) => {
+      // BUG-012: never echo raw grams as an entered kg/t value — use mobileQuantity.
+      const qty = mobileQuantity(l.grams);
+      return {
+        productRef: l.product?.reference ?? l.product?._id ?? null,
+        name: l.product?.name ?? null,
+        qty: { value: String(qty.value), unit: qty.unit, grams: qty.grams },
+        entered: { value: String(qty.value), unit: qty.unit, grams: qty.grams },
+        available: l.product
+          ? { value: String(fromGrams(l.product.availableGrams, 'g')), unit: 'g' as const, grams: l.product.availableGrams }
+          : null,
+        ok: !l.issue,
+        issue:
+          l.issue === 'unavailable'
+            ? 'withdrawn'
+            : l.issue === 'insufficient-quantity'
+              ? 'insufficient'
+              : l.issue ?? null,
+      };
+    }),
     count: p.lines.length,
     version: p.cart.version,
   };

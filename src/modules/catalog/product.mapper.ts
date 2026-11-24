@@ -35,6 +35,7 @@ export function toMobileProduct(p: IProduct, typeName?: string) {
     },
     pricePerGram: mobileMoney(perGram(p)),
     createdAt: iso(p.createdAt),
+    lab: p.lab?.name || p.lab?.certificateNo ? { name: p.lab?.name ?? null, certificateNo: p.lab?.certificateNo ?? null } : null,
   };
 }
 
