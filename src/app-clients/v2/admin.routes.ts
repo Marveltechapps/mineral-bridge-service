@@ -170,6 +170,43 @@ export function createV2AdminRouter(): Router {
     res.json({ url: signed.url, expiresAt: signed.expiresAt.toISOString() });
   }));
 
+  // Inline bytes for a private file. KYC captures require the kyc action; other staff get 403.
+  r.get('/files/:fileId/content', asyncHandler(async (req, res) => {
+    const fileId = String(req.params.fileId);
+    const file = await FileModel.findById(fileId).lean();
+    if (!file || !file.bytes || file.deletedAt) {
+      res.status(404).json({ code: 'file/not-found', message: 'File not found' });
+      return;
+    }
+    const { KycDocumentModel } = await import('../../modules/kyc/kyc.model.js');
+    const linked = await KycDocumentModel.exists({ fileId, discardedAt: null });
+    const kycFile = file.purpose === 'kyc' || file.refType === 'kyc' || Boolean(linked);
+    const send = async () => {
+      const { uploadsService } = await import('../../modules/uploads/uploads.service.js');
+      const opened = await uploadsService.openForDownload(fileId);
+      res.setHeader('Content-Type', opened.file.contentType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(opened.file.filename)}"`);
+      res.setHeader('Content-Length', String(opened.file.bytes));
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      await new Promise<void>((resolve, reject) => {
+        opened.stream.on('error', reject);
+        res.on('finish', resolve);
+        res.on('error', reject);
+        opened.stream.pipe(res);
+      });
+    };
+    if (kycFile) {
+      // Await the gate here. asyncHandler forwards to the next route when this function
+      // returns before a response has started, which would 404 the file.
+      await new Promise<void>((resolve, reject) => {
+        requireAction('kyc')(req, res, (err) => (err ? reject(err) : resolve()));
+      });
+    }
+    await send();
+  }));
+
   // ---- Orders ----
   r.get('/orders', asyncHandler(async (req, res) => {
     const q = req.query as Record<string, string>;

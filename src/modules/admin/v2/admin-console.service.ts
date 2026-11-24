@@ -3,6 +3,7 @@
  * Every value comes from MongoDB. Empty collections stay empty — nothing here is sample data.
  */
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { conflict, notFound, unprocessable } from '../../../common/errors/app-error.js';
 import { recordAudit } from '../../audit/audit.service.js';
 import { v2DocumentsService } from '../../documents/v2.documents.service.js';
@@ -32,6 +33,10 @@ import {
 } from '../../../models/workflow.model.js';
 import { AuditLog } from '../../audit/audit.model.js';
 import { KycDocumentModel, KycSubmissionModel } from '../../kyc/kyc.model.js';
+import { reviewDocumentName } from '../../kyc/kyc.id-types.js';
+import type { KycDocKind } from '../../kyc/kyc.types.js';
+import { FileModel } from '../../../models/file.model.js';
+import { absoluteStoragePath } from '../../storage/storage.service.js';
 import { StaffModel } from '../../staff/staff.model.js';
 import { UserModel } from '../../users/user.model.js';
 import { userRepository } from '../../users/user.repository.js';
@@ -68,6 +73,34 @@ export function consoleStage(side: string, stepKey: string | undefined, status: 
   const mapped = stepKey === 'ship' ? 'picked' : stepKey === 'delivered' && side === 'sell' ? 'received' : stepKey;
   const idx = mapped ? keys.indexOf(mapped) : 0;
   return { stage: idx < 0 ? 0 : idx, serverStep: stepKey || keys[Math.max(idx, 0)] || keys[0]! };
+}
+
+const CONSOLE_KYC_KIND: Record<string, string> = {
+  id_front: 'idFront',
+  id_back: 'idBack',
+  selfie: 'selfie',
+  proof_of_address: 'address',
+  business_registration: 'business',
+};
+
+/** Console drawers key images by `idFront` / `address` / `business`. A passport photo page is the front capture. */
+export function consoleKycKind(kind: string, idTypeId?: string | null): string {
+  if (kind === 'id_front' && idTypeId === 'passport') return 'passport';
+  return CONSOLE_KYC_KIND[kind] || kind;
+}
+
+/** Relative admin URL. The dashboard proxies `/v2/admin`, and the session cookie is scoped to that path. */
+export function kycFileViewUrl(fileId: string): string {
+  return `/v2/admin/files/${encodeURIComponent(fileId)}/content`;
+}
+
+function fileOnDisk(storageKey: string | undefined): boolean {
+  if (!storageKey) return false;
+  try {
+    return existsSync(absoluteStoragePath(storageKey));
+  } catch {
+    return false;
+  }
 }
 
 export function kycWord(status: string | undefined): string {
@@ -335,17 +368,36 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
       cust: cu?.id || o.customerNo || o.userId,
       items,
       sell: o.sell
-        ? {
-            mineral: o.sell.mineralSlug,
-            name: o.sell.name,
-            qty: o.sell.qty?.base ?? 0,
-            unit: o.sell.qty?.unit || 'kg',
-            form: o.sell.form || '',
-            grade: o.sell.grade || '',
-            photos: Math.max(o.sell.photoFileIds?.length ?? 0, o.sell.photosReceived ?? 0),
-            docs: o.sell.documentFileIds ?? [],
-            details: o.sell.details || '',
-          }
+        ? (() => {
+            const unit = o.sell.qty?.unit || 'kg';
+            const entered = (o.sell.qty as { value?: number } | undefined)?.value;
+            const qty =
+              entered != null && Number.isFinite(Number(entered))
+                ? Number(entered)
+                : gramsToQty(o.totalGrams ?? 0, unit);
+            const photoIds = o.sell.photoFileIds ?? [];
+            return {
+              mineral: o.sell.mineralSlug,
+              name: o.sell.name,
+              // BUG-012/013: never surface raw gram `base` as the human quantity.
+              qty,
+              unit,
+              form: o.sell.form || '',
+              grade: o.sell.grade || '',
+              photos: Math.max(photoIds.length, o.sell.photosReceived ?? 0),
+              // BUG-011: expose file ids so the console can resolve preview URLs.
+              photoFileIds: photoIds,
+              files: photoIds.map((id, i) => ({
+                kind: 'photo',
+                name: `sell-photo-${i + 1}.jpg`,
+                label: ['Material close-up', 'Full lot', 'Weighing scale reading', 'Bar stamp / markings', 'Storage location', 'Packaging'][i % 6],
+                fileId: id,
+                url: `/v2/admin/files/${encodeURIComponent(id)}/content`,
+              })),
+              docs: o.sell.documentFileIds ?? [],
+              details: o.sell.details || '',
+            };
+          })()
         : undefined,
       stage: staged.stage,
       serverStep: staged.serverStep,
@@ -550,17 +602,34 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
     };
   });
 
-  const docsBySubmission = new Map<string, { kind: string; label: string; status: string; note: string }[]>();
-  for (const d of kycDocs) {
-    if (d.discardedAt) continue;
+  const activeKycDocs = kycDocs.filter((d) => !d.discardedAt);
+  const kycFileIds = [...new Set(activeKycDocs.map((d) => d.fileId).filter((id): id is string => Boolean(id)))];
+  const storedKycFiles = kycFileIds.length
+    ? await FileModel.find({ _id: { $in: kycFileIds } }).lean()
+    : [];
+  const kycFileById = new Map(storedKycFiles.map((f) => [f._id, f]));
+
+  const idTypeBySubmission = new Map(kycRows.map((k) => [String(k._id), k.idTypeId] as const));
+  const docsBySubmission = new Map<string, Array<Record<string, string>>>();
+  for (const d of activeKycDocs) {
     const key = String(d.submissionId || '');
     const list = docsBySubmission.get(key) ?? [];
     const review = d.review?.status;
+    const stored = d.fileId ? kycFileById.get(d.fileId) : undefined;
+    const ready = Boolean(stored && stored.bytes > 0 && !stored.deletedAt && fileOnDisk(stored.storageKey));
+    const idTypeId = d.idTypeId || idTypeBySubmission.get(key);
+    const kind = d.kind as KycDocKind;
     list.push({
-      kind: d.kind,
-      label: d.originalName || d.kind,
+      kind: consoleKycKind(kind, idTypeId),
+      wireKind: kind,
+      label: reviewDocumentName(kind, idTypeId),
+      name: stored?.filename || d.originalName || '',
       status: review === 'verified' ? 'ok' : review === 'rejected' || d.flag ? 'flagged' : 'submitted',
       note: d.flag?.message || d.review?.reason || '',
+      fileId: d.fileId || '',
+      mimeType: ready ? (stored?.contentType || d.mimeType || '') : '',
+      url: ready && d.fileId ? kycFileViewUrl(d.fileId) : '',
+      availability: ready ? 'ready' : 'unavailable',
     });
     docsBySubmission.set(key, list);
   }
