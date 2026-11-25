@@ -310,13 +310,24 @@ export async function setOrderHold(reference: string, input: { type?: 'declined'
   } else {
     if (!input.type) throw unprocessable('Choose a hold type.', { type: 'Required' });
     if (!(input.reason && input.reason.trim().length >= 3)) throw unprocessable('Add a reason.', { reason: 'Required' });
+    const reason = input.reason.trim();
     order.hold = {
       type: input.type,
       owner: 'platform',
-      reason: input.reason.trim(),
+      reason,
       openedAt: new Date(),
       openedBy: { kind: 'staff', id: staff.id, name: staff.name },
     };
+    if (input.type === 'discrepancy') {
+      order.timeline = order.timeline || [];
+      order.timeline.push({
+        stepKey: order.workflow?.stepKey || 'hold',
+        label: /^\[qty:rejected\]/i.test(reason) ? 'Discrepancy rejected' : 'Quantity discrepancy',
+        actor: { kind: 'staff', id: staff.id, name: staff.name },
+        note: reason,
+        at: new Date(),
+      });
+    }
   }
   order.version = (order.version ?? 0) + 1;
   await order.save();

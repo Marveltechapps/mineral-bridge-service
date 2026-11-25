@@ -8,6 +8,7 @@ import { QuotationModel, PaymentModel, InspectionModel, SellerPayoutModel, Issue
 import { ShipmentModel } from '../../../models/contract-lc.model.js';
 import { ProductModel } from '../../../models/catalog.model.js';
 import { UserModel } from '../../../models/user.model.js';
+import { Partner } from '../../../models/content.models.js';
 import { ordersRepository } from '../../orders/orders.repository.js';
 import { v2ContractService } from '../../orders/v2.contract.service.js';
 import { v2PaymentsService } from '../../orders/v2.payments.service.js';
@@ -22,8 +23,36 @@ import { stepDef, type WorkflowDefinitionId } from '../../workflow/workflow.defi
 import { enqueueOutbox } from '../../outbox/outbox.service.js';
 import { notifyUser } from '../../notifications/notifications.service.js';
 import { userRepository } from '../../users/user.repository.js';
+import {
+  GENERIC_SELL_CONDITION,
+  humanQty,
+  isNonCompliant,
+  sellApprovalBlocks,
+  sellQuoteCondition,
+} from './sell-approval.js';
 
 type StaffActor = { id: string; name: string; role?: string; publicId?: string };
+
+const LOGISTICS_TYPES = ['logistics', 'bonded_carrier'];
+const INSPECTION_TYPES = ['inspection', 'inspection_agency', 'lab', 'lab_assay'];
+
+async function resolveCompanyId(raw: unknown, types: string[], required = true) {
+  const value = String(raw ?? '').trim();
+  if (!value) {
+    if (required) throw unprocessable('Select a company.', { partnerId: 'Required' });
+    return '';
+  }
+  const found = await Partner.findOne({
+    $or: [{ partnerId: value }, { name: value }],
+    type: { $in: types },
+    status: 'active',
+  }).lean();
+  if (!found?.partnerId) {
+    if (!required) return '';
+    throw unprocessable('Choose a company from the list.', { partnerId: 'Unknown company' });
+  }
+  return String(found.partnerId);
+}
 
 function adminOrderCard(order: IOrder, customer?: { name?: string; business?: string; country?: string; no?: string }) {
   return {
@@ -51,6 +80,82 @@ function adminOrderCard(order: IOrder, customer?: { name?: string; business?: st
     enteredAt: order.workflow?.enteredAt?.toISOString?.() ?? order.updatedAt.toISOString(),
     createdAt: order.createdAt.toISOString(),
   };
+}
+
+async function stampSellQuoteAgency(orderId: string, agencyPartnerId?: string) {
+  if (!agencyPartnerId) return;
+  const partner = await Partner.findOne({ partnerId: agencyPartnerId }).select('name').lean();
+  const quotes = await QuotationModel.find({ orderId }).select('conditions');
+  for (const quote of quotes) {
+    const next = sellQuoteCondition(quote.conditions, partner?.name || '');
+    if (quote.conditions && next !== quote.conditions && (quote.conditions === GENERIC_SELL_CONDITION || /SGS test report/.test(quote.conditions))) {
+      quote.conditions = next;
+      await quote.save();
+    }
+  }
+}
+
+async function upsertLogisticsShipment(order: IOrder, partnerId: string, location: string, staff: StaffActor, pickedUp: boolean) {
+  const existing = await ShipmentModel.findOne({ orderId: order._id });
+  const event = {
+    _id: opaqueId('sev'),
+    index: existing?.events?.length ?? 0,
+    title: pickedUp ? 'Picked up' : 'Partner assigned',
+    location: location || undefined,
+    occurredAt: new Date(),
+    projected: false,
+    actor: staff.name,
+  };
+  if (existing) {
+    existing.partnerId = partnerId;
+    if (location) {
+      existing.currentLocation = location;
+      existing.pickup = { ...(existing.pickup ?? {}), address: location };
+    }
+    if (pickedUp) existing.status = 'picked_up';
+    existing.events = existing.events ?? [];
+    existing.events.push(event);
+    await existing.save();
+    return existing;
+  }
+  return ShipmentModel.create({
+    reference: await references.shipment(),
+    ownerIds: [order.userId],
+    orderId: order._id,
+    direction: order.side === 'buy' ? 'vault_to_buyer' : 'seller_to_vault',
+    partnerId,
+    mode: ['road'],
+    status: pickedUp ? 'picked_up' : 'booked',
+    currentLocation: location || undefined,
+    pickup: location ? { address: location } : undefined,
+    progressPercent: 0,
+    events: [event],
+    documents: [],
+  });
+}
+
+async function assertSellApprovable(order: IOrder) {
+  const insp = await InspectionModel.findOne({ orderId: order._id }).sort({ createdAt: -1 }).lean();
+  const partner = insp?.agencyPartnerId
+    ? await Partner.findOne({ partnerId: insp.agencyPartnerId }).select('name').lean()
+    : null;
+  const declared = humanQty(order.sell?.qty);
+  const weighed = humanQty(insp?.findings?.weight);
+  const certified = humanQty(insp?.report?.net) ?? weighed;
+  const report = insp?.report as { certificateNo?: string; grade?: string; result?: string; remarks?: string } | undefined;
+  const blocks = sellApprovalBlocks({
+    side: 'sell',
+    declaredQty: declared,
+    declaredGrade: order.sell?.grade || '',
+    agencyName: partner?.name || '',
+    weighed,
+    certifiedQty: certified,
+    report: report?.certificateNo ? { no: report.certificateNo, grade: report.grade, result: report.result, remarks: report.remarks } : null,
+    holdType: order.hold?.type,
+    holdReason: order.hold?.reason,
+    timeline: (order.timeline ?? []).map((row) => ({ label: row.label, note: row.note })),
+  });
+  if (blocks.length) throw conflict('inspection/blocked', blocks.join(' '));
 }
 
 export const adminV2OrdersService = {
@@ -252,7 +357,7 @@ export const adminV2OrdersService = {
           deduction: data.deduction as { label: string; amount: ReturnType<typeof money> } | undefined,
           total: money(totalMinor),
           rateNote: data.marketRateNote as string | undefined,
-          conditions: order.side === 'sell' ? 'Subject to Mineral Bridge inspection and SGS test report' : undefined,
+          conditions: order.side === 'sell' ? GENERIC_SELL_CONDITION : undefined,
           validUntil: new Date(Date.now() + validDays * 86_400_000),
           status: 'issued',
           issuedBy: actor,
@@ -298,13 +403,7 @@ export const adminV2OrdersService = {
         return v2PaymentsService.confirm(order, input.staff, input.version, input.data.confirmedRef as string | undefined);
       }
       case 'assigned': {
-        let partnerId = String(input.data.partnerId ?? input.data.partner ?? '').trim();
-        if (partnerId) {
-          const { Partner } = await import('../../../models/content.models.js');
-          const found = await Partner.findOne({ $or: [{ partnerId }, { name: partnerId }] }).lean();
-          if (found?.partnerId) partnerId = String(found.partnerId);
-        }
-        if (!partnerId) throw unprocessable('Partner is required.', { partnerId: 'Required' });
+        const partnerId = await resolveCompanyId(input.data.partnerId ?? input.data.partner, LOGISTICS_TYPES);
         const shipment = await ShipmentModel.create({
           reference: await references.shipment(),
           ownerIds: [order.userId],
@@ -368,11 +467,14 @@ export const adminV2OrdersService = {
         return casAdvanceOrder({ order, toKey: 'schedule', actor, note: input.note, version: input.version });
       }
       case 'schedule': {
+        const agencyPartnerId = await resolveCompanyId(input.data.agencyPartnerId ?? input.data.agency, INSPECTION_TYPES);
+        const inspectorRaw = input.data.inspectorPartnerId ?? input.data.inspector;
+        const inspectorFound = inspectorRaw ? await resolveCompanyId(inspectorRaw, ['inspector'], false) : '';
         await InspectionModel.create({
           orderId: order._id,
-          type: (input.data.type as 'third_party' | 'platform_onsite') ?? 'platform_onsite',
-          agencyPartnerId: input.data.agencyPartnerId as string | undefined,
-          inspectorPartnerId: input.data.inspectorPartnerId as string | undefined,
+          type: 'third_party',
+          agencyPartnerId,
+          inspectorPartnerId: inspectorRaw ? (inspectorFound || String(inspectorRaw)) : undefined,
           schedule: {
             date: String(input.data.date),
             time: String(input.data.time),
@@ -382,30 +484,39 @@ export const adminV2OrdersService = {
           },
           status: 'scheduled',
         });
+        await stampSellQuoteAgency(order._id, agencyPartnerId);
         return casAdvanceOrder({ order, toKey: 'inspect', actor, note: input.note, version: input.version });
       }
       case 'inspect': {
-        await InspectionModel.updateOne(
-          { orderId: order._id },
-          {
-            $set: {
-              status: 'completed',
-              findings: {
-                weight: input.data.weight,
-                sampleNo: input.data.sampleNo,
-                seals: input.data.seals,
-                photoFileIds: input.data.photoFileIds,
-                result: input.data.result,
-                notes: input.data.notes,
-                by: actor,
-                at: new Date(),
-              },
-            },
+        const onSite = String(input.data.result || '').trim();
+        if (!onSite) throw unprocessable('Record the on-site result.', { result: 'Required' });
+        const agencyRaw = input.data.agencyPartnerId ?? input.data.agency;
+        const inspectorRaw = input.data.inspectorPartnerId ?? input.data.inspector;
+        const inspectorFound = inspectorRaw ? await resolveCompanyId(inspectorRaw, ['inspector'], false) : '';
+        const inspectorName = inspectorRaw && !inspectorFound ? String(inspectorRaw).trim() : '';
+        const set: Record<string, unknown> = {
+          status: 'completed',
+          findings: {
+            weight: input.data.weight,
+            sampleNo: input.data.sampleNo,
+            seals: input.data.seals,
+            photoFileIds: input.data.photoFileIds,
+            result: onSite,
+            notes: input.data.notes,
+            inspector: inspectorName || undefined,
+            by: actor,
+            at: new Date(),
           },
-        );
+        };
+        if (agencyRaw) set.agencyPartnerId = await resolveCompanyId(agencyRaw, INSPECTION_TYPES);
+        if (inspectorRaw) set.inspectorPartnerId = inspectorFound || inspectorName;
+        await InspectionModel.updateOne({ orderId: order._id }, { $set: set });
+        if (set.agencyPartnerId) await stampSellQuoteAgency(order._id, String(set.agencyPartnerId));
         return casAdvanceOrder({ order, toKey: 'sgs', actor, note: input.note, version: input.version });
       }
       case 'sgs': {
+        const reportResult = String(input.data.result || '').trim();
+        if (!reportResult) throw unprocessable('Record the report result.', { result: 'Required' });
         await InspectionModel.updateOne(
           { orderId: order._id },
           {
@@ -415,10 +526,12 @@ export const adminV2OrdersService = {
                 certificateNo: String(input.data.certificateNo),
                 grade: input.data.grade as string | undefined,
                 net: input.data.net,
-                result: input.data.result,
+                result: reportResult,
+                remarks: input.data.remarks ? String(input.data.remarks) : undefined,
                 fileId: input.data.fileId as string | undefined,
                 uploadedBy: actor,
                 at: new Date(),
+                history: [],
               },
             },
           },
@@ -426,11 +539,33 @@ export const adminV2OrdersService = {
         return casAdvanceOrder({ order, toKey: 'reportOk', actor, note: input.note, version: input.version });
       }
       case 'approved':
+        if (order.side === 'sell') await assertSellApprovable(order);
         return casAdvanceOrder({ order, toKey: 'payout', actor, note: input.note, version: input.version });
       case 'payout':
+        if (order.side === 'sell') await assertSellApprovable(order);
         return casAdvanceOrder({ order, toKey: 'ship', actor, note: input.note, version: input.version });
-      case 'ship':
-        return casAdvanceOrder({ order, toKey: 'delivered', actor, note: input.note, version: input.version });
+      case 'ship': {
+        const partnerId = await resolveCompanyId(input.data.partnerId ?? input.data.partner, LOGISTICS_TYPES);
+        const location = String(input.data.location ?? '').trim();
+        const assignOnly = input.data.assignOnly === true;
+        if (!assignOnly && !location) throw unprocessable('Enter the pickup location.', { location: 'Required' });
+        const shipment = await upsertLogisticsShipment(order, partnerId, location, input.staff, !assignOnly);
+        if (!order.links?.shipmentId) {
+          await OrderModel.updateOne({ _id: order._id }, { $set: { 'links.shipmentId': shipment._id } });
+        }
+        if (assignOnly) {
+          const fresh = await OrderModel.findById(order._id).lean();
+          return fresh ?? order;
+        }
+        return casAdvanceOrder({
+          order,
+          toKey: 'delivered',
+          actor,
+          note: input.note,
+          version: input.version,
+          extraSet: { 'links.shipmentId': shipment._id },
+        });
+      }
       case 'done':
         return casAdvanceOrder({
           order,
@@ -563,5 +698,153 @@ export const adminV2OrdersService = {
       target: { type: 'order', id: order._id },
     });
     return { ref: order.reference, deleted: true as const, status: 'cancelled' as const, stockRestored: reserved };
+  },
+
+  /** Stores a new certificate and keeps the previous one. Does not advance the order or flip a failing result. */
+  async reviseInspectionReport(ref: string, input: {
+    certificateNo: string;
+    grade?: string;
+    net: { measure?: string; unit?: string; base?: number; value?: number };
+    result: string;
+    remarks?: string;
+    fileId?: string;
+  }, staff: StaffActor) {
+    const order = await loadOrderByRef(ref);
+    const insp = await InspectionModel.findOne({ orderId: order._id }).sort({ createdAt: -1 });
+    if (!insp?.report) throw conflict('inspection/report-missing', 'Upload the first report from the inspection step.');
+    const result = String(input.result || '').trim();
+    const certificateNo = String(input.certificateNo || '').trim();
+    if (!certificateNo) throw unprocessable('Report number is required.', { certificateNo: 'Required' });
+    if (!result) throw unprocessable('Record the report result.', { result: 'Required' });
+    const previous = { ...(insp.report as unknown as Record<string, unknown>) };
+    const history = Array.isArray(previous.history) ? [...(previous.history as Record<string, unknown>[])] : [];
+    delete previous.history;
+    history.push({ ...previous, replacedAt: new Date() });
+    const previousFile = String((insp.report as { fileId?: string }).fileId || '');
+    insp.set('report', {
+      certificateNo,
+      grade: input.grade,
+      net: input.net,
+      result,
+      remarks: input.remarks ? String(input.remarks).trim() : undefined,
+      fileId: input.fileId || previousFile || undefined,
+      uploadedBy: { kind: 'staff', id: staff.id, name: staff.name, role: staff.role },
+      at: new Date(),
+      history,
+    });
+    await insp.save();
+    if (previousFile && input.fileId && previousFile !== input.fileId) {
+      await IssuedDocumentModel.updateMany(
+        {
+          'entity.id': { $in: [String(order._id), order.reference] },
+          type: { $in: ['inspection_report', 'test_certificate'] },
+          fileId: previousFile,
+          status: 'issued',
+        },
+        { $set: { status: 'replaced' } },
+      );
+    }
+    const note = `Certificate ${certificateNo} · grade ${input.grade || ''} · net ${humanQty(input.net) ?? ''} · ${result}`;
+    await OrderModel.updateOne({ _id: order._id }, {
+      $inc: { version: 1 },
+      $push: {
+        timeline: {
+          stepKey: order.workflow?.stepKey || 'approved',
+          label: 'Inspection report revised',
+          actor: { kind: 'staff', id: staff.id, name: staff.name, role: staff.role },
+          note,
+          at: new Date(),
+        },
+      },
+    });
+    void notifyUser(order.userId, {
+      event: 'inspection.report_revised',
+      title: `Inspection report revised · ${order.reference}`,
+      body: note,
+      target: { type: 'order', id: order._id },
+    });
+    return { reference: order.reference, certificateNo, result };
+  },
+
+  /** Records another on-site inspection. The certificate and its result stay as they were. */
+  async reinspect(ref: string, input: {
+    weight?: { measure?: string; unit?: string; base?: number; value?: number };
+    seals?: string;
+    result: string;
+    notes?: string;
+    inspector?: string;
+    agency?: string;
+  }, staff: StaffActor) {
+    const order = await loadOrderByRef(ref);
+    const insp = await InspectionModel.findOne({ orderId: order._id }).sort({ createdAt: -1 });
+    if (!insp?.findings) throw conflict('inspection/missing', 'Record the inspection before a re-inspection.');
+    const result = String(input.result || '').trim();
+    if (!result) throw unprocessable('Record the on-site result.', { result: 'Required' });
+    const previous = { ...(insp.findings as unknown as Record<string, unknown>) };
+    const history = Array.isArray(previous.history) ? [...(previous.history as Record<string, unknown>[])] : [];
+    delete previous.history;
+    history.push({ ...previous, replacedAt: new Date() });
+    const inspectorRaw = String(input.inspector || '').trim();
+    const inspectorFound = inspectorRaw ? await resolveCompanyId(inspectorRaw, ['inspector'], false) : '';
+    if (input.agency) {
+      insp.agencyPartnerId = await resolveCompanyId(input.agency, INSPECTION_TYPES);
+      await stampSellQuoteAgency(order._id, insp.agencyPartnerId);
+    }
+    if (inspectorRaw) insp.inspectorPartnerId = inspectorFound || inspectorRaw;
+    insp.set('findings', {
+      weight: input.weight || insp.findings.weight,
+      seals: input.seals ?? insp.findings.seals,
+      result,
+      notes: input.notes ? String(input.notes).trim() : insp.findings.notes,
+      inspector: inspectorRaw && !inspectorFound ? inspectorRaw : (insp.findings as { inspector?: string }).inspector,
+      sampleNo: insp.findings.sampleNo,
+      photoFileIds: insp.findings.photoFileIds,
+      history,
+      by: { kind: 'staff', id: staff.id, name: staff.name, role: staff.role },
+      at: new Date(),
+    });
+    await insp.save();
+    const note = `On-site result ${result}${inspectorRaw ? ` · inspector ${inspectorRaw}` : ''}`;
+    await OrderModel.updateOne({ _id: order._id }, {
+      $inc: { version: 1 },
+      $push: {
+        timeline: {
+          stepKey: order.workflow?.stepKey || 'approved',
+          label: 'Re-inspection recorded',
+          actor: { kind: 'staff', id: staff.id, name: staff.name, role: staff.role },
+          note,
+          at: new Date(),
+        },
+      },
+    });
+    return { reference: order.reference, result };
+  },
+
+  /** Asks the agency for a new certificate. The saved report result is left unchanged. */
+  async requestCorrectedReport(ref: string, note: string | undefined, staff: StaffActor) {
+    const order = await loadOrderByRef(ref);
+    const insp = await InspectionModel.findOne({ orderId: order._id }).sort({ createdAt: -1 }).lean();
+    if (!insp?.report?.certificateNo) throw conflict('inspection/report-missing', 'There is no inspection report to correct.');
+    if (!isNonCompliant(insp.report.result)) throw conflict('inspection/compliant', 'The current report is not non-compliant.');
+    const text = (note && note.trim()) || `Report ${insp.report.certificateNo} is ${insp.report.result}. A corrected certificate is required before final approval.`;
+    await OrderModel.updateOne({ _id: order._id }, {
+      $inc: { version: 1 },
+      $push: {
+        timeline: {
+          stepKey: order.workflow?.stepKey || 'approved',
+          label: 'Corrected report requested',
+          actor: { kind: 'staff', id: staff.id, name: staff.name, role: staff.role },
+          note: text,
+          at: new Date(),
+        },
+      },
+    });
+    void notifyUser(order.userId, {
+      event: 'inspection.correction_requested',
+      title: `Corrected inspection report requested · ${order.reference}`,
+      body: text,
+      target: { type: 'order', id: order._id },
+    });
+    return { reference: order.reference, result: insp.report.result };
   },
 };

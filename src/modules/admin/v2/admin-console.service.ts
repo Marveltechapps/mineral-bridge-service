@@ -23,6 +23,7 @@ import { OrderModel, type IOrder } from '../../../models/order.model.js';
 import { SettingsDoc } from '../../../models/platform.models.js';
 import { SupportTicketModel } from '../../../models/support.model.js';
 import { NotificationModel } from '../../../models/notification.model.js';
+import { sellQuoteCondition } from './sell-approval.js';
 import {
   InspectionModel,
   IssuedDocumentModel,
@@ -148,6 +149,33 @@ const DOC_TYPE: Record<string, string> = {
   refund_receipt: 'Refund receipt',
 };
 
+function consolePartnerType(type: string | undefined) {
+  if (type === 'lab' || type === 'lab_assay' || type === 'inspection_agency' || type === 'inspection') return 'inspection';
+  if (type === 'logistics' || type === 'bonded_carrier') return 'logistics';
+  return type || '';
+}
+
+function partnerName(names: Map<string, string>, id: string | undefined | null, empty: string) {
+  const raw = String(id || '').trim();
+  if (!raw) return empty;
+  return names.get(raw) || raw;
+}
+
+function recordedQty(q?: { value?: number; base?: number } | null): number | undefined {
+  if (!q) return undefined;
+  if (q.value != null && Number.isFinite(Number(q.value))) return Number(q.value);
+  if (q.base != null && Number.isFinite(Number(q.base))) return Number(q.base);
+  return undefined;
+}
+
+function inspectorLabel(names: Map<string, string>, id: string | undefined, written?: string) {
+  const raw = String(id || '').trim();
+  const named = raw ? names.get(raw) || '' : '';
+  if (named) return named;
+  if (raw && !/^(PT-|ins_|usr_)/i.test(raw) && !/^[a-f0-9]{24}$/i.test(raw)) return raw;
+  return String(written || '').trim();
+}
+
 function ms(value: Date | string | undefined | null): number {
   if (!value) return Date.now();
   const t = new Date(value).getTime();
@@ -269,6 +297,10 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
   const shipByOrder = new Map(shipments.map((s) => [String(s.orderId), s]));
   const inspByOrder = new Map(inspections.map((s) => [String(s.orderId), s]));
   const orderIds = orders.map((o) => String(o._id));
+  if (orderIds.length) {
+    const linked = await ShipmentModel.find({ orderId: { $in: orderIds } }).sort({ updatedAt: 1 }).lean();
+    for (const shipment of linked) shipByOrder.set(String(shipment.orderId), shipment);
+  }
   const quotations = orderIds.length
     ? await QuotationModel.find({ orderId: { $in: orderIds } }).sort({ rev: 1 }).lean()
     : [];
@@ -338,6 +370,13 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
     };
   });
 
+  const partnerNameById = new Map(partners.map((p) => [p.partnerId, p.name]));
+  const missingPartnerIds = [...shipByOrder.values()].map((s) => s.partnerId).filter((id): id is string => Boolean(id) && !partnerNameById.has(id));
+  if (missingPartnerIds.length) {
+    const named = await Partner.find({ partnerId: { $in: missingPartnerIds } }).select('partnerId name').lean();
+    for (const partner of named) partnerNameById.set(partner.partnerId, partner.name);
+  }
+  const quoteRepairs: { id: string; conditions: string }[] = [];
   const ordersOut = orders.map((o) => {
     const cu = custByUser.get(o.userId);
     const historyKey = [...(o.stageHistory ?? [])].reverse().find((s) => s.key)?.key;
@@ -346,6 +385,7 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
     const payout = payoutByOrder.get(String(o._id));
     const ship = shipByOrder.get(String(o._id));
     const insp = inspByOrder.get(String(o._id));
+    const agencyLabel = insp ? partnerName(partnerNameById, insp.agencyPartnerId, '') : '';
     const total = moneyMajor(o.pricing?.lockedTotal ?? o.pricing?.quotedTotal ?? o.total);
     const items = (o.lines ?? []).map((line) => {
       const product = line.productId ? productById.get(String(line.productId)) || productByRef.get(line.productId) : undefined;
@@ -430,7 +470,11 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
         total: moneyMajor(q.total),
         rate: q.rateNote || '',
         market: q.rateNote || '',
-        cond: q.conditions || '',
+        cond: o.side === 'sell' ? (() => {
+          const next = sellQuoteCondition(q.conditions, agencyLabel);
+          if (q.conditions && next !== q.conditions) quoteRepairs.push({ id: String(q._id), conditions: next });
+          return next;
+        })() : (q.conditions || ''),
         valid: ms(q.validUntil),
         at: ms(q.issuedAt),
         status: q.status === 'accepted' ? 'accepted'
@@ -475,7 +519,7 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
       const events = (ship.events ?? []).map((e) => ({ t: e.title, at: ms(e.occurredAt), loc: e.location || '', note: '' }));
       row.ship = {
         id: ship.reference,
-        partner: ship.partnerId || '',
+        partner: partnerName(partnerNameById, ship.partnerId, ''),
         mode: (ship.mode ?? []).join(', '),
         scope: ship.direction || ship.scope || '',
         contact: ship.contact || '',
@@ -486,19 +530,47 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
       };
     }
     if (insp) {
+      const findings = insp.findings as { weight?: { value?: number; base?: number }; seals?: string; result?: string; notes?: string; inspector?: string } | undefined;
+      const report = insp.report as {
+        certificateNo?: string; grade?: string; net?: { value?: number; base?: number }; result?: string;
+        remarks?: string; fileId?: string; at?: Date;
+        history?: Array<{ certificateNo?: string; grade?: string; result?: string; net?: { value?: number; base?: number }; at?: Date }>;
+      } | undefined;
       row.insp = {
-        agency: insp.agencyPartnerId || 'Inspection',
-        inspector: insp.inspectorPartnerId || '',
+        agency: partnerName(partnerNameById, insp.agencyPartnerId, '—'),
+        inspector: inspectorLabel(partnerNameById, insp.inspectorPartnerId, findings?.inspector),
         date: insp.schedule?.date || '',
         time: insp.schedule?.time || '',
         location: insp.schedule?.location || '',
-        res: insp.findings
-          ? { weight: insp.findings.weight?.base ?? 0, seals: insp.findings.seals || '', result: insp.findings.result || '', notes: insp.findings.notes || '' }
+        res: findings
+          ? { weight: recordedQty(findings.weight) ?? 0, seals: findings.seals || '', result: findings.result || '', notes: findings.notes || '' }
           : undefined,
       };
+      if (report?.certificateNo) {
+        row.sgs = {
+          agency: partnerName(partnerNameById, insp.agencyPartnerId, ''),
+          no: report.certificateNo,
+          grade: report.grade || '',
+          net: recordedQty(report.net) ?? recordedQty(findings?.weight) ?? 0,
+          result: report.result || '',
+          remarks: report.remarks || '',
+          fileId: report.fileId || '',
+          at: report.at ? ms(report.at) : undefined,
+          history: (report.history || []).map((item) => ({
+            no: item.certificateNo || '',
+            grade: item.grade || '',
+            result: item.result || '',
+            net: recordedQty(item.net),
+            at: item.at ? ms(item.at) : undefined,
+          })),
+        };
+      }
     }
     return row;
   });
+  if (quoteRepairs.length) {
+    await Promise.all(quoteRepairs.map((item) => QuotationModel.updateOne({ _id: item.id }, { $set: { conditions: item.conditions } })));
+  }
 
   const bidsByAuction = new Map<string, { cust: string; amt: number; at: number; auto: boolean; max: number }[]>();
   for (const b of bids) {
@@ -683,7 +755,7 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
 
   const partnerRows = partners.map((p) => ({
     id: p.partnerId,
-    type: p.type === 'lab' ? 'inspection' : p.type,
+    type: consolePartnerType(p.type),
     name: p.name,
     modes: (p.modes ?? []).join(', '),
     regions: (p.regions ?? []).join(', ') || p.base || '',

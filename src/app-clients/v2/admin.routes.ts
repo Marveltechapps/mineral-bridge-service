@@ -279,6 +279,43 @@ export function createV2AdminRouter(): Router {
     }),
   );
 
+  const inspectionStaff = (staff: { id: string; name: string; roleKey?: string; role?: { name?: string } }) => ({
+    id: staff.id, name: staff.name, role: staff.roleKey ?? staff.role?.name,
+  });
+  r.post('/orders/:ref/inspection-report', requireCsrf, requireAction('inspection', 'ops'), validate({
+    body: z.object({
+      certificateNo: z.string().trim().min(1).max(80),
+      grade: z.string().trim().max(80).optional(),
+      net: z.object({ measure: z.string().optional(), unit: z.string().optional(), base: z.number().optional(), value: z.number().optional() }),
+      result: z.string().trim().min(1).max(80),
+      remarks: z.string().trim().max(2000).optional(),
+      fileId: z.string().trim().max(80).optional(),
+    }),
+  }), asyncHandler(async (req, res) => {
+    const { staff } = getStaffContext(req);
+    res.json(await adminV2OrdersService.reviseInspectionReport(String(req.params.ref), req.body, inspectionStaff(staff)));
+  }));
+  r.post('/orders/:ref/inspection/reinspect', requireCsrf, requireAction('inspection', 'ops'), validate({
+    body: z.object({
+      weight: z.object({ measure: z.string().optional(), unit: z.string().optional(), base: z.number().optional(), value: z.number().optional() }).optional(),
+      seals: z.string().trim().max(160).optional(),
+      result: z.string().trim().min(1).max(160),
+      notes: z.string().trim().max(2000).optional(),
+      inspector: z.string().trim().max(160).optional(),
+      agency: z.string().trim().max(160).optional(),
+    }),
+  }), asyncHandler(async (req, res) => {
+    const { staff } = getStaffContext(req);
+    res.json(await adminV2OrdersService.reinspect(String(req.params.ref), req.body, inspectionStaff(staff)));
+  }));
+  r.post('/orders/:ref/inspection/request-correction', requireCsrf, requireAction('inspection', 'ops'), validate({
+    body: z.object({ note: z.string().trim().max(2000).optional() }).optional(),
+  }), asyncHandler(async (req, res) => {
+    const { staff } = getStaffContext(req);
+    const note = (req.body as { note?: string } | undefined)?.note;
+    res.json(await adminV2OrdersService.requestCorrectedReport(String(req.params.ref), note, inspectionStaff(staff)));
+  }));
+
   // ---- Customers ----
   r.get('/customers', requireAction('kyc'), asyncHandler(async (req, res) => {
     const q = String((req.query as { q?: string }).q ?? '');
