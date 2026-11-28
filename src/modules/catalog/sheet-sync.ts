@@ -3,6 +3,7 @@ import { quotedPriceToE4PerGram } from '../../common/utils/pricing-math.js';
 import { CategoryModel, MineralTypeModel, ProductFormModel, ProductModel, SubcategoryModel } from '../../models/catalog.model.js';
 import { Mineral, MineralCategory } from '../reference/reference.model.js';
 import { hierarchyErrors, imageMatchesSource, imageNameFromUrl } from './hierarchy.js';
+import { parseSheetNumber, readSheetQuantity, sheetQuantityToGrams } from './sheet-quantity.js';
 
 export interface CatalogSyncIssue {
   sourceRow: number;
@@ -58,7 +59,9 @@ const HEADER_ALIASES: Record<string, string[]> = {
   imageName: ['image name', 'image filename', 'filename'],
   description: ['product description', 'description'],
   grade: ['grade', 'specification', 'specifications', 'spec', 'purity'],
-  unit: ['unit', 'units'],
+  unit: ['unit', 'units', 'uom', 'unit of measure'],
+  availableQty: ['availability', 'available quantity', 'available qty', 'available', 'quantity', 'qty', 'stock', 'available stock'],
+  minQty: ['min order', 'minimum order', 'minimum quantity', 'min quantity', 'minimum qty', 'min qty', 'minimum', 'min', 'min_order'],
   price: ['price', 'unit price', 'price usd', 'sell price', 'buyer price'],
   image: ['image', 'image url', 'image_url', 'photo', 'picture', 'image link', 'primary image'],
   origin: ['origin', 'country', 'country of origin'],
@@ -149,7 +152,7 @@ function parseCsv(text: string): string[][] {
 }
 
 function headerIndex(headers: string[]): Record<string, number> {
-  const normalized = headers.map((h) => h.trim().toLowerCase());
+  const normalized = headers.map((h) => h.trim().toLowerCase().replace(/\s+/g, ' '));
   const index: Record<string, number> = {};
   for (const [key, aliases] of Object.entries(HEADER_ALIASES)) {
     const at = normalized.findIndex((h) => aliases.includes(h));
@@ -228,6 +231,11 @@ export interface ParsedCatalog {
     name: string;
     grade: string;
     unit: string;
+    availableQty: number | null;
+    minQty: number | null;
+    quantityFromSheet: boolean;
+    minFromSheet: boolean;
+    unitFromSheet: boolean;
     price: number | null;
     imageUrl: string | null;
     imageName: string | null;
@@ -243,7 +251,10 @@ export function parseCatalogCsv(csv: string): ParsedCatalog {
   const table = parseCsv(csv);
   const headers = (table[0] ?? []).map((h) => h.trim());
   const index = headerIndex(headers);
-  const missingHeaders = ['category', 'name'].filter((key) => index[key] === undefined);
+  const missingHeaders = [
+    ...(index.category === undefined && index.subcategory === undefined ? ['category'] : []),
+    ...(index.name === undefined ? ['name'] : []),
+  ];
   const rows: CatalogSyncRowReport[] = [];
   const accepted: ParsedCatalog['accepted'] = [];
   const seenIds = new Set<string>();
@@ -257,7 +268,9 @@ export function parseCatalogCsv(csv: string): ParsedCatalog {
     const name = cell(raw, index, 'name');
     const description = cell(raw, index, 'description');
     const grade = cell(raw, index, 'grade');
-    const unit = cell(raw, index, 'unit') || 'kg';
+    const measured = readSheetQuantity(cell(raw, index, 'availableQty'), cell(raw, index, 'unit'));
+    const minMeasured = parseSheetNumber(cell(raw, index, 'minQty'));
+    const unit = measured.unit;
     const price = parsePrice(cell(raw, index, 'price'));
     const imageUrl = cell(raw, index, 'image');
     const imageName = cell(raw, index, 'imageName') || imageNameFromUrl(imageUrl) || '';
@@ -345,6 +358,11 @@ export function parseCatalogCsv(csv: string): ParsedCatalog {
       name,
       grade,
       unit,
+      availableQty: measured.availableQty,
+      minQty: minMeasured,
+      quantityFromSheet: measured.quantityFromSheet,
+      minFromSheet: minMeasured != null,
+      unitFromSheet: measured.unitFromSheet,
       price,
       imageUrl: storedImage,
       imageName: storedImage ? imageName || imageNameFromUrl(storedImage) : null,
@@ -528,6 +546,21 @@ export async function syncCatalogFromCsv(
       { upsert: true },
     );
     const hasPrice = row.price != null;
+    const existing = await ProductModel.findOne({ 'attributes.sourceKey': row.sourceKey }).select('attributes availableGrams minOrderGrams').lean();
+    const prev = (existing?.attributes ?? {}) as { availableQty?: unknown; minQty?: unknown; unit?: unknown; listPrice?: unknown };
+    const availableQty = row.quantityFromSheet
+      ? row.availableQty
+      : typeof prev.availableQty === 'number' && Number.isFinite(prev.availableQty)
+        ? prev.availableQty
+        : null;
+    const minQty = row.minFromSheet
+      ? row.minQty
+      : typeof prev.minQty === 'number' && Number.isFinite(prev.minQty)
+        ? prev.minQty
+        : null;
+    const unit = row.unitFromSheet ? row.unit : typeof prev.unit === 'string' && prev.unit ? prev.unit : row.unit;
+    const grams = row.quantityFromSheet && availableQty != null ? sheetQuantityToGrams(availableQty, unit) : null;
+    const minGrams = row.minFromSheet && minQty != null ? sheetQuantityToGrams(minQty, unit) : null;
     const written = await ProductModel.updateOne(
       { 'attributes.sourceKey': row.sourceKey },
       {
@@ -543,15 +576,19 @@ export async function syncCatalogFromCsv(
           origin: { country: row.origin === 'unspecified' ? 'unspecified' : row.origin },
           status: 'active',
           currency: 'USD',
-          ...(hasPrice ? { unitPriceMinorE4PerGram: sheetPriceToE4PerGram(row.price as number, row.unit) } : {}),
+          ...(hasPrice ? { unitPriceMinorE4PerGram: sheetPriceToE4PerGram(row.price as number, unit) } : {}),
+          ...(grams != null ? { availableGrams: grams } : {}),
+          ...(minGrams != null ? { minOrderGrams: minGrams } : {}),
           imageUrl,
           imageName: row.imageName ?? undefined,
           attributes: {
             sourceSheet: true,
             sourceKey: row.sourceKey,
             sourceId: row.sourceId,
-            unit: row.unit,
-            ...(hasPrice ? { listPrice: row.price } : {}),
+            unit,
+            ...(availableQty != null ? { availableQty } : {}),
+            ...(minQty != null ? { minQty } : {}),
+            ...(hasPrice ? { listPrice: row.price } : typeof prev.listPrice === 'number' ? { listPrice: prev.listPrice } : {}),
             categoryName: row.category,
             subcategoryName: row.subcategory,
             mineralTypeName: row.mineralType,
@@ -562,7 +599,8 @@ export async function syncCatalogFromCsv(
         },
         $setOnInsert: {
           reference: `MBV-SHEET-${row.sourceKey}`.slice(0, 64),
-          availableGrams: 0,
+          ...(grams == null ? { availableGrams: 0 } : {}),
+          ...(minGrams == null ? { minOrderGrams: 0 } : {}),
           ...(hasPrice ? {} : { unitPriceMinorE4PerGram: 0 }),
         },
       },

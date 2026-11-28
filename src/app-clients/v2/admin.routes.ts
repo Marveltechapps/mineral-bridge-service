@@ -44,6 +44,7 @@ import {
   updateConsoleCustomer,
   updateConsoleLot,
 } from '../../modules/admin/v2/admin-console.service.js';
+import { bulkDeleteConsoleLots } from '../../modules/admin/v2/admin-lot-bulk.service.js';
 import { adminOverview } from '../../modules/admin/v2/admin-overview.service.js';
 import { getKycView } from '../../modules/kyc/kyc.service.js';
 import { decideSubmission } from '../../modules/kyc/kyc.review.js';
@@ -107,6 +108,13 @@ function staffActor(staff: { id: string; name: string; publicId?: string }) {
 
 export function createV2AdminRouter(): Router {
   const r = Router();
+  // An <img> or a new tab cannot send X-Client. The session cookie is still required below.
+  r.use((req, _res, next) => {
+    if (req.method === 'GET' && /\/files\/[^/]+\/content$/.test(req.path) && !req.header('x-client')) {
+      req.headers['x-client'] = 'admin';
+    }
+    next();
+  });
   r.use(requireV2Client, requireAdminV2Client);
 
   r.get('/health', (_req, res) => res.json({ status: 'ok', api: 'v2/admin' }));
@@ -173,38 +181,31 @@ export function createV2AdminRouter(): Router {
   // Inline bytes for a private file. KYC captures require the kyc action; other staff get 403.
   r.get('/files/:fileId/content', asyncHandler(async (req, res) => {
     const fileId = String(req.params.fileId);
-    const file = await FileModel.findById(fileId).lean();
-    if (!file || !file.bytes || file.deletedAt) {
+    const { openAdminFile } = await import('../../modules/admin/v2/admin-files.service.js');
+    const opened = await openAdminFile(fileId);
+    if (!opened) {
       res.status(404).json({ code: 'file/not-found', message: 'File not found' });
       return;
     }
-    const { KycDocumentModel } = await import('../../modules/kyc/kyc.model.js');
-    const linked = await KycDocumentModel.exists({ fileId, discardedAt: null });
-    const kycFile = file.purpose === 'kyc' || file.refType === 'kyc' || Boolean(linked);
-    const send = async () => {
-      const { uploadsService } = await import('../../modules/uploads/uploads.service.js');
-      const opened = await uploadsService.openForDownload(fileId);
-      res.setHeader('Content-Type', opened.file.contentType || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(opened.file.filename)}"`);
-      res.setHeader('Content-Length', String(opened.file.bytes));
-      res.setHeader('Cache-Control', 'private, no-store');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-      await new Promise<void>((resolve, reject) => {
-        opened.stream.on('error', reject);
-        res.on('finish', resolve);
-        res.on('error', reject);
-        opened.stream.pipe(res);
-      });
-    };
-    if (kycFile) {
+    if (opened.kyc) {
       // Await the gate here. asyncHandler forwards to the next route when this function
       // returns before a response has started, which would 404 the file.
       await new Promise<void>((resolve, reject) => {
         requireAction('kyc')(req, res, (err) => (err ? reject(err) : resolve()));
       });
     }
-    await send();
+    res.setHeader('Content-Type', opened.contentType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(opened.filename)}"`);
+    if (opened.bytes > 0) res.setHeader('Content-Length', String(opened.bytes));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    await new Promise<void>((resolve, reject) => {
+      opened.stream.on('error', reject);
+      res.on('finish', resolve);
+      res.on('error', reject);
+      opened.stream.pipe(res);
+    });
   }));
 
   // ---- Orders ----
@@ -1022,6 +1023,21 @@ export function createV2AdminRouter(): Router {
     }),
     asyncHandler(async (req, res) => {
       res.json(await updateConsoleLot(String(req.params.ref), req.body as { name?: string; grade?: string; status?: 'listed' | 'draft' | 'sold out' | 'archived'; avail?: number; unit?: 'g' | 'kg' | 't'; minOrder?: number; referencePrice?: number }));
+    }),
+  );
+
+  r.post(
+    '/catalogue/lots/bulk-delete',
+    requireCsrf,
+    requireAction('catalogue'),
+    validate({
+      body: z.object({
+        ids: z.array(z.string().min(1).max(80)).min(1).max(2000),
+      }),
+    }),
+    asyncHandler(async (req, res) => {
+      const { staff } = getStaffContext(req);
+      res.json(await bulkDeleteConsoleLots((req.body as { ids: string[] }).ids, { id: staff.id, name: staff.name }));
     }),
   );
 

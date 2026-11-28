@@ -141,4 +141,37 @@ describe('catalog hierarchy import', () => {
     const crossed = await request(app).get('/v1/lots').query({ category: 'gemstone', productForm: bullion!.productFormSlug }).set(WEB);
     expect(crossed.body.items).toEqual([]);
   });
+
+  it('stores the sheet quantity and unit and does not zero them on a later import', async () => {
+    if (mongoose.connection.readyState !== 1) return;
+    const csv = `ID,Mineral,Category,Unit,Available Quantity,Minimum Quantity
+G1,Gold Concentrate,Precious Metal,kg,250,10
+G2,Packed Ore,Precious Metal,2000g,,1.5
+G3,Bulk Liquid,Industrial Mineral,litre,2.5,0.5
+`;
+    const report = await syncCatalogFromCsv(csv, 'qty-sheet', fetchImpl);
+    expect(report.accessError).toBeUndefined();
+    expect(report.created).toBe(3);
+    const gold = await ProductModel.findOne({ 'attributes.sourceId': 'G1' }).lean();
+    expect(gold?.attributes).toMatchObject({ unit: 'kg', availableQty: 250, minQty: 10 });
+    expect(gold?.availableGrams).toBe(250_000);
+    expect(gold?.minOrderGrams).toBe(10_000);
+    const packed = await ProductModel.findOne({ 'attributes.sourceId': 'G2' }).lean();
+    expect(packed?.attributes).toMatchObject({ unit: 'g', availableQty: 2000, minQty: 1.5 });
+    expect(packed?.availableGrams).toBe(2000);
+    const liquid = await ProductModel.findOne({ 'attributes.sourceId': 'G3' }).lean();
+    expect(liquid?.attributes).toMatchObject({ unit: 'litre', availableQty: 2.5, minQty: 0.5 });
+    expect(liquid?.availableGrams).toBe(0);
+
+    const again = `ID,Mineral,Category,Unit
+G1,Gold Concentrate,Precious Metal,kg
+`;
+    await syncCatalogFromCsv(again, 'qty-sheet', fetchImpl);
+    const kept = await ProductModel.findOne({ 'attributes.sourceId': 'G1' }).lean();
+    expect(kept?.availableGrams).toBe(250_000);
+    expect(kept?.attributes).toMatchObject({ unit: 'kg', availableQty: 250, minQty: 10 });
+    const manual = await ProductModel.findOne({ reference: 'MBV-MANUAL-1' }).lean();
+    expect(manual?.availableGrams).toBe(500);
+    expect(manual?.attributes?.sourceSheet).toBeFalsy();
+  });
 });

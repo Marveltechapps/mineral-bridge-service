@@ -12,10 +12,11 @@ describe('bugfix admin kyc BUG-022 document preview', () => {
     const company = kycDocPreview({ kind: 'business', name: 'company-registration.pdf', url: '/v2/admin/files/fil_biz/content', availability: 'ready' });
     expect(front.img).toContain('fil_front');
     expect(back.img).toContain('fil_back');
-    expect(company.img).toContain('fil_biz');
+    expect(company.img).toBe('');
+    expect(company.open).toContain('fil_biz');
     expect(front.ph).toBe('');
     expect(back.ph).toBe('');
-    expect(company.ph).toBe('');
+    expect(company.ph).toBe('PDF');
   });
 
   it('bug_022_missing_file_is_unavailable_not_a_broken_image', () => {

@@ -3,7 +3,6 @@
  * Every value comes from MongoDB. Empty collections stay empty — nothing here is sample data.
  */
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { conflict, notFound, unprocessable } from '../../../common/errors/app-error.js';
 import { recordAudit } from '../../audit/audit.service.js';
 import { v2DocumentsService } from '../../documents/v2.documents.service.js';
@@ -14,6 +13,7 @@ import { consoleCategories } from './admin-catalogue.service.js';
 import { consoleStockMoves, documentsView, mediaView } from './admin-lots.service.js';
 import { references } from '../../../common/utils/references.js';
 import { gramsInUnit } from '../../../common/utils/quantity.js';
+import { canonicalSheetUnit, gramsToSheetQty, readSheetQuantity, sheetQuantityToGrams, sheetUnitIsMass } from '../../catalog/sheet-quantity.js';
 import { quotedPriceToE4PerGram } from '../../../common/utils/pricing-math.js';
 import { AuctionModel, BidModel } from '../../../models/auction.model.js';
 import { MineralTypeModel, ProductModel } from '../../../models/catalog.model.js';
@@ -36,8 +36,7 @@ import { AuditLog } from '../../audit/audit.model.js';
 import { KycDocumentModel, KycSubmissionModel } from '../../kyc/kyc.model.js';
 import { reviewDocumentName } from '../../kyc/kyc.id-types.js';
 import type { KycDocKind } from '../../kyc/kyc.types.js';
-import { FileModel } from '../../../models/file.model.js';
-import { absoluteStoragePath } from '../../storage/storage.service.js';
+import { describeAdminFiles } from './admin-files.service.js';
 import { StaffModel } from '../../staff/staff.model.js';
 import { UserModel } from '../../users/user.model.js';
 import { userRepository } from '../../users/user.repository.js';
@@ -95,14 +94,6 @@ export function kycFileViewUrl(fileId: string): string {
   return `/v2/admin/files/${encodeURIComponent(fileId)}/content`;
 }
 
-function fileOnDisk(storageKey: string | undefined): boolean {
-  if (!storageKey) return false;
-  try {
-    return existsSync(absoluteStoragePath(storageKey));
-  } catch {
-    return false;
-  }
-}
 
 export function kycWord(status: string | undefined): string {
   if (status === 'verified' || status === 'approved') return 'approved';
@@ -183,15 +174,67 @@ function ms(value: Date | string | undefined | null): number {
 }
 
 function gramsToQty(grams: number, unit: string): number {
-  if (unit === 'kg') return grams / 1000;
-  if (unit === 't') return grams / 1_000_000;
-  return grams;
+  return gramsToSheetQty(grams, unit);
+}
+
+function catalogueQuantity(p: {
+  availableGrams: number;
+  minOrderGrams?: number;
+  qty?: { unit?: string };
+  attributes?: Record<string, unknown> | null;
+}): { avail: number; unit: string; min: number } {
+  const attrs = p.attributes ?? {};
+  const rawUnit = typeof attrs.unit === 'string' ? attrs.unit : '';
+  const packed = rawUnit ? readSheetQuantity('', rawUnit) : null;
+  const storedQty = typeof attrs.availableQty === 'number' && Number.isFinite(attrs.availableQty) ? attrs.availableQty : null;
+  const sheetQty = storedQty != null ? storedQty : packed?.quantityFromSheet ? packed.availableQty : null;
+  const unit = packed?.quantityFromSheet
+    ? packed.unit
+    : rawUnit
+      ? canonicalSheetUnit(rawUnit)
+      : (p.qty?.unit || (p.availableGrams >= 1000 ? 'kg' : 'g'));
+  const storedMin = typeof attrs.minQty === 'number' && Number.isFinite(attrs.minQty) ? attrs.minQty : null;
+  const avail = p.availableGrams > 0 && sheetUnitIsMass(unit)
+    ? gramsToQty(p.availableGrams, unit)
+    : sheetQty != null
+      ? sheetQty
+      : gramsToQty(p.availableGrams || 0, unit);
+  const min = storedMin != null
+    ? storedMin
+    : gramsToQty(p.minOrderGrams || 0, sheetUnitIsMass(unit) ? unit : 'g');
+  return { avail, unit, min };
+}
+
+/** Writes the quantity that was packed into `attributes.unit` (for example "2000g") onto the product. */
+export async function repairPackedSheetQuantities(): Promise<number> {
+  const pending = await ProductModel.find({
+    'attributes.sourceSheet': true,
+    'attributes.availableQty': { $exists: false },
+  }).select('attributes availableGrams').lean();
+  let repaired = 0;
+  for (const product of pending) {
+    const raw = String((product.attributes as { unit?: string } | undefined)?.unit || '');
+    const parsed = readSheetQuantity('', raw);
+    if (!parsed.quantityFromSheet || parsed.availableQty == null) continue;
+    const set: Record<string, unknown> = {
+      'attributes.unit': parsed.unit,
+      'attributes.availableQty': parsed.availableQty,
+    };
+    if (!(product.availableGrams > 0)) {
+      const grams = sheetQuantityToGrams(parsed.availableQty, parsed.unit);
+      if (grams != null) set.availableGrams = grams;
+    }
+    await ProductModel.updateOne({ _id: product._id }, { $set: set });
+    repaired += 1;
+  }
+  return repaired;
 }
 
 export async function buildAdminConsole(input?: { page?: number; pageSize?: number }) {
   const page = Math.max(1, Math.floor(input?.page ?? 1) || 1);
   const pageSize = Math.min(100, Math.max(1, Math.floor(input?.pageSize ?? 50) || 50));
   const skip = (page - 1) * pageSize;
+  await repairPackedSheetQuantities();
   const [
     orders,
     users,
@@ -340,8 +383,9 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
   const custByUser = new Map(customers.map((c) => [c.userId, c]));
 
   const lots = products.map((p) => {
-    const unit = p.qty?.unit || (p.availableGrams >= 1000 ? 'kg' : 'g');
-    const avail = gramsToQty(p.availableGrams, unit);
+    const measured = catalogueQuantity(p);
+    const unit = measured.unit;
+    const avail = measured.avail;
     const status = p.status === 'active' ? 'listed' : p.status === 'sold' ? 'sold out' : p.status === 'withdrawn' ? 'archived' : 'draft';
     return {
       id: p.reference,
@@ -351,7 +395,7 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
       form: p.form || '',
       avail,
       unit,
-      min: gramsToQty(p.minOrderGrams || 0, unit),
+      min: measured.min,
       grade: p.grade || p.purity || '',
       lab: p.lab?.name || '',
       cert: p.lab?.certificateNo || '',
@@ -377,6 +421,8 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
     for (const partner of named) partnerNameById.set(partner.partnerId, partner.name);
   }
   const quoteRepairs: { id: string; conditions: string }[] = [];
+  const sellFileIds = orders.flatMap((o) => [...(o.sell?.photoFileIds ?? []), ...(o.sell?.documentFileIds ?? [])]);
+  const sellFileById = await describeAdminFiles(sellFileIds);
   const ordersOut = orders.map((o) => {
     const cu = custByUser.get(o.userId);
     const historyKey = [...(o.stageHistory ?? [])].reverse().find((s) => s.key)?.key;
@@ -416,25 +462,48 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
                 ? Number(entered)
                 : gramsToQty(o.totalGrams ?? 0, unit);
             const photoIds = o.sell.photoFileIds ?? [];
+            const docIds = o.sell.documentFileIds ?? [];
+            const photoLabels = ['Material close-up', 'Full lot', 'Weighing scale reading', 'Bar stamp / markings', 'Storage location', 'Packaging'];
+            const files = [
+              ...photoIds.map((id, i) => {
+                const stored = sellFileById.get(id);
+                const ready = Boolean(stored?.ready);
+                return {
+                  kind: 'photo' as const,
+                  name: stored?.filename || `sell-photo-${i + 1}.jpg`,
+                  label: photoLabels[i % photoLabels.length],
+                  fileId: id,
+                  mimeType: ready ? stored?.contentType || '' : '',
+                  url: ready ? stored?.url || '' : '',
+                  availability: ready ? 'ready' : 'unavailable',
+                };
+              }),
+              ...docIds.map((id, i) => {
+                const stored = sellFileById.get(id);
+                const ready = Boolean(stored?.ready);
+                const image = ready && (stored?.contentType || '').startsWith('image/');
+                return {
+                  kind: image ? 'photo' as const : 'doc' as const,
+                  name: stored?.filename || `sell-document-${i + 1}`,
+                  label: stored?.filename || `Supporting document ${i + 1}`,
+                  fileId: id,
+                  mimeType: ready ? stored?.contentType || '' : '',
+                  url: ready ? stored?.url || '' : '',
+                  availability: ready ? 'ready' : 'unavailable',
+                };
+              }),
+            ];
             return {
               mineral: o.sell.mineralSlug,
               name: o.sell.name,
-              // BUG-012/013: never surface raw gram `base` as the human quantity.
               qty,
               unit,
               form: o.sell.form || '',
               grade: o.sell.grade || '',
               photos: Math.max(photoIds.length, o.sell.photosReceived ?? 0),
-              // BUG-011: expose file ids so the console can resolve preview URLs.
               photoFileIds: photoIds,
-              files: photoIds.map((id, i) => ({
-                kind: 'photo',
-                name: `sell-photo-${i + 1}.jpg`,
-                label: ['Material close-up', 'Full lot', 'Weighing scale reading', 'Bar stamp / markings', 'Storage location', 'Packaging'][i % 6],
-                fileId: id,
-                url: `/v2/admin/files/${encodeURIComponent(id)}/content`,
-              })),
-              docs: o.sell.documentFileIds ?? [],
+              files,
+              docs: docIds,
               details: o.sell.details || '',
             };
           })()
@@ -676,10 +745,7 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
 
   const activeKycDocs = kycDocs.filter((d) => !d.discardedAt);
   const kycFileIds = [...new Set(activeKycDocs.map((d) => d.fileId).filter((id): id is string => Boolean(id)))];
-  const storedKycFiles = kycFileIds.length
-    ? await FileModel.find({ _id: { $in: kycFileIds } }).lean()
-    : [];
-  const kycFileById = new Map(storedKycFiles.map((f) => [f._id, f]));
+  const kycFileById = await describeAdminFiles(kycFileIds);
 
   const idTypeBySubmission = new Map(kycRows.map((k) => [String(k._id), k.idTypeId] as const));
   const docsBySubmission = new Map<string, Array<Record<string, string>>>();
@@ -688,7 +754,7 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
     const list = docsBySubmission.get(key) ?? [];
     const review = d.review?.status;
     const stored = d.fileId ? kycFileById.get(d.fileId) : undefined;
-    const ready = Boolean(stored && stored.bytes > 0 && !stored.deletedAt && fileOnDisk(stored.storageKey));
+    const ready = Boolean(stored?.ready);
     const idTypeId = d.idTypeId || idTypeBySubmission.get(key);
     const kind = d.kind as KycDocKind;
     list.push({
@@ -700,7 +766,7 @@ export async function buildAdminConsole(input?: { page?: number; pageSize?: numb
       note: d.flag?.message || d.review?.reason || '',
       fileId: d.fileId || '',
       mimeType: ready ? (stored?.contentType || d.mimeType || '') : '',
-      url: ready && d.fileId ? kycFileViewUrl(d.fileId) : '',
+      url: ready && stored?.url ? stored.url : '',
       availability: ready ? 'ready' : 'unavailable',
     });
     docsBySubmission.set(key, list);

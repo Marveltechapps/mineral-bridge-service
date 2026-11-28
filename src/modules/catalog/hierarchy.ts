@@ -75,3 +75,40 @@ export function repairCatalogImageUrl(url: string | null | undefined): string | 
   if (IMAGE_EXT.test(path)) return url;
   return `${path}.png${query}${fragment}`;
 }
+
+/** An image the mobile app can load on any device. Relative and bundled asset paths are not. */
+export function httpCatalogImage(url: string | null | undefined): string | null {
+  const repaired = repairCatalogImageUrl(url);
+  if (!repaired || !/^https?:\/\//i.test(repaired)) return null;
+  return repaired;
+}
+
+export interface CatalogImageRef {
+  url: string;
+  name: string | null;
+}
+
+/**
+ * Image for one mineral. Uses that record's own URL, then a form that belongs to it.
+ * A form from another mineral is never considered.
+ */
+export function pickCatalogImage(
+  label: string,
+  ownUrl: string | null | undefined,
+  ownName: string | null | undefined,
+  forms: { name: string; imageUrl?: string | null; imageName?: string | null; isActive?: boolean }[],
+): CatalogImageRef | null {
+  const own = httpCatalogImage(ownUrl);
+  if (own) return { url: own, name: ownName ?? null };
+  const wanted = label.trim().toLowerCase();
+  const ready = forms
+    .filter((form) => form.isActive !== false)
+    .map((form) => ({ name: form.name, imageName: form.imageName ?? null, url: httpCatalogImage(form.imageUrl) }))
+    .filter((form): form is { name: string; imageName: string | null; url: string } => !!form.url)
+    .sort((a, b) => a.name.localeCompare(b.name, 'en'));
+  if (!ready.length) return null;
+  const exact = ready.find((form) => form.name.trim().toLowerCase() === wanted);
+  const prefixed = ready.find((form) => form.name.trim().toLowerCase().startsWith(wanted));
+  const pick = exact ?? prefixed ?? ready[0]!;
+  return { url: pick.url, name: pick.imageName };
+}

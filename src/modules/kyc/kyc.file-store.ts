@@ -7,7 +7,7 @@ import type { KycDocKind } from './kyc.types.js';
 
 export const KYC_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
-export type DetectedMime = 'image/jpeg' | 'image/png' | 'application/pdf';
+export type DetectedMime = 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
 
 /** Trust the bytes, not the client-declared Content-Type. */
 export function sniffMime(buffer: Buffer): DetectedMime | null {
@@ -19,6 +19,7 @@ export function sniffMime(buffer: Buffer): DetectedMime | null {
     return 'image/png';
   }
   if (buffer.length >= 5 && buffer.subarray(0, 5).toString('latin1') === '%PDF-') return 'application/pdf';
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('latin1') === 'RIFF' && buffer.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
   return null;
 }
 
@@ -51,6 +52,7 @@ export interface KycFileStore {
 const EXT: Record<DetectedMime, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
+  'image/webp': 'webp',
   'application/pdf': 'pdf',
 };
 

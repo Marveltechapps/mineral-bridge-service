@@ -3,11 +3,17 @@ import { mobileMoney, webMoney } from '../../common/utils/currency.js';
 import { unitPriceMinorPerGram } from '../../common/utils/pricing-math.js';
 import { commercialUnit, mobileQuantity, webQuantity } from '../../common/utils/quantity.js';
 import { iso } from '../../common/utils/time-display.js';
-import { repairCatalogImageUrl } from './hierarchy.js';
+import { httpCatalogImage, repairCatalogImageUrl } from './hierarchy.js';
 
 const perGram = (p: IProduct) => ({ amountMinor: unitPriceMinorPerGram(p.unitPriceMinorE4PerGram), currency: p.currency });
 
-export function toMobileProduct(p: IProduct, typeName?: string) {
+/** First http(s) image among the lot, its stored media, and the product form it belongs to. */
+export function productCatalogImage(p: Pick<IProduct, 'imageUrl' | 'media'>, formImageUrl?: string | null): string | null {
+  const media = [...(p.media ?? [])].filter((item) => item.kind === 'image').sort((a, b) => a.sort - b.sort)[0]?.url;
+  return httpCatalogImage(p.imageUrl) ?? httpCatalogImage(media) ?? httpCatalogImage(formImageUrl);
+}
+
+export function toMobileProduct(p: IProduct, typeName?: string, formImageUrl?: string | null) {
   return {
     id: p._id,
     reference: p.reference,
@@ -26,7 +32,7 @@ export function toMobileProduct(p: IProduct, typeName?: string) {
     assured: p.assured,
     verified: p.verified,
     status: p.status,
-    imageUrl: repairCatalogImageUrl(p.imageUrl),
+    imageUrl: productCatalogImage(p, formImageUrl),
     gradient: p.gradientFrom ? { from: p.gradientFrom, to: p.gradientTo ?? p.gradientFrom } : null,
     availability: {
       available: mobileQuantity(p.availableGrams),
@@ -39,9 +45,9 @@ export function toMobileProduct(p: IProduct, typeName?: string) {
   };
 }
 
-export function toMobileProductDetail(p: IProduct, typeName?: string) {
+export function toMobileProductDetail(p: IProduct, typeName?: string, formImageUrl?: string | null) {
   return {
-    ...toMobileProduct(p, typeName),
+    ...toMobileProduct(p, typeName, formImageUrl),
     description: p.description ?? null,
     attributes: p.attributes,
     media: [...p.media].sort((a, b) => a.sort - b.sort).map((m) => ({ id: m._id, kind: m.kind, url: m.url, thumbnailUrl: m.thumbnailUrl ?? null })),

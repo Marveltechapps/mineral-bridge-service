@@ -8,6 +8,7 @@ import { optionalUser } from '../auth/auth.middleware.js';
 import { catalogService as svc } from './catalog.service.js';
 import { documentTypeParam, resolveProductDocument, type ProductDocumentType } from './product-documents.js';
 import { catalogueAvailabilityFlags } from './product-availability.js';
+import { httpCatalogImage, pickCatalogImage } from './hierarchy.js';
 import { toMobileProduct, toMobileProductDetail } from './product.mapper.js';
 
 const listQuery = z.object({
@@ -34,27 +35,46 @@ export function createV2CatalogueRouter(): Router {
       const tree = await svc.hierarchy();
       const items = await Promise.all(
         tree.map(async (c) => {
-          const minerals = c.subcategories.flatMap((sub) =>
-            sub.mineralTypes.map((m) => ({ slug: m.slug, name: m.name })),
+          const bySlug = new Map<string, { slug: string; name: string; forms: typeof c.subcategories[number]['mineralTypes'][number]['productForms'] }>();
+          for (const sub of c.subcategories) {
+            for (const mineral of sub.mineralTypes) {
+              if (mineral.isActive === false) continue;
+              const existing = bySlug.get(mineral.slug);
+              if (existing) {
+                existing.forms.push(...mineral.productForms);
+                continue;
+              }
+              bySlug.set(mineral.slug, { slug: mineral.slug, name: mineral.name, forms: [...mineral.productForms] });
+            }
+          }
+          const minerals = await Promise.all(
+            [...bySlug.values()].map(async (mineral) => {
+              const type = c.subcategories.flatMap((sub) => sub.mineralTypes).find((row) => row.slug === mineral.slug);
+              const image = pickCatalogImage(mineral.name, type?.imageUrl, type?.imageName, mineral.forms);
+              return {
+                slug: mineral.slug,
+                name: mineral.name,
+                image,
+                lotCount: await ProductModel.countDocuments({
+                  typeSlug: mineral.slug,
+                  status: { $in: ['active', 'sold'] },
+                }),
+              };
+            }),
           );
-          const withCounts = await Promise.all(
-            minerals.map(async (m) => ({
-              ...m,
-              lotCount: await ProductModel.countDocuments({
-                typeSlug: m.slug,
-                status: { $in: ['active', 'sold'] },
-              }),
-            })),
-          );
+          const storedCategory = httpCatalogImage(c.imageUrl);
+          const categoryImage = storedCategory
+            ? { url: storedCategory, name: c.imageName ?? null }
+            : minerals.find((mineral) => mineral.image)?.image ?? null;
           return {
             slug: c.slug,
             name: c.name,
-            image: c.imageUrl ? { url: c.imageUrl, name: c.imageName ?? null } : null,
-            minerals: withCounts,
+            image: categoryImage,
+            minerals,
           };
         }),
       );
-      res.setHeader('Cache-Control', 'public, max-age=300');
+      res.setHeader('Cache-Control', 'private, max-age=0, must-revalidate');
       res.status(200).json({ items });
     }),
   );
@@ -85,9 +105,10 @@ export function createV2CatalogueRouter(): Router {
         skip,
         limit,
       );
-      const names = await svc.typeNames();
+      const [names, forms] = await Promise.all([svc.typeNames(), svc.productForms()]);
+      const formImage = new Map(forms.map((form) => [form.slug, form.imageUrl]));
       const items = rows.map((p) => {
-        const card = toMobileProduct(p, names.get(p.typeSlug));
+        const card = toMobileProduct(p, names.get(p.typeSlug), p.productFormSlug ? formImage.get(p.productFormSlug) : null);
         return {
           ...card,
           productRef: p.reference,
@@ -110,8 +131,9 @@ export function createV2CatalogueRouter(): Router {
       if (!p || p.status === 'draft') {
         throw notFound('catalogue/not-found', 'Product not found');
       }
-      const names = await svc.typeNames();
-      const detail = toMobileProductDetail(p, names.get(p.typeSlug));
+      const [names, forms] = await Promise.all([svc.typeNames(), svc.productForms()]);
+      const formUrl = forms.find((form) => form.slug === p.productFormSlug)?.imageUrl;
+      const detail = toMobileProductDetail(p, names.get(p.typeSlug), formUrl);
       res.status(200).json({ ...detail, productRef: p.reference, ...catalogueAvailabilityFlags(p) });
     }),
   );

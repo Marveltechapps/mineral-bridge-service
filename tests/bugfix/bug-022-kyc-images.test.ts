@@ -53,7 +53,7 @@ describe('bugfix admin kyc BUG-022 customer images visible', () => {
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const csrf = String(res.headers['x-csrf-token'] || res.body.me?.csrfToken || '');
     const call = (method: 'get' | 'post', url: string) => agent[method](url).set('X-Client', 'admin').set('X-CSRF-Token', csrf);
-    return { call };
+    return { call, agent };
   }
 
   async function storeFile(userId: string, filename: string, contentType: string, bytes: Buffer) {
@@ -128,6 +128,9 @@ describe('bugfix admin kyc BUG-022 customer images visible', () => {
 
     const front = await ceo.call('get', byKind.idFront!.url);
     expect(front.status, JSON.stringify(front.body)).toBe(200);
+    const cookieOnly = await ceo.agent.get(byKind.idFront!.url);
+    expect(cookieOnly.status, JSON.stringify(cookieOnly.body)).toBe(200);
+    expect(cookieOnly.headers['content-type']).toMatch(/image\/png/);
     expect(front.headers['content-type']).toMatch(/image\/png/);
     expect(front.headers['content-disposition']).toMatch(/inline/i);
     expect(Buffer.isBuffer(front.body) ? front.body.equals(PNG) : Buffer.from(front.body).equals(PNG)).toBe(true);
